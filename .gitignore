@@ -1,0 +1,11 @@
+__pycache__/
+*.py[cod]
+.venv/
+.pytest_cache/
+.ruff_cache/
+.env
+secrets/*
+!secrets/.gitkeep
+*.pem
+.DS_Store
+.logs/
