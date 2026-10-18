@@ -10,7 +10,7 @@ Prometheus + Grafana · Langfuse.
 - **Plan & architecture:** [docs/PLAN.md](docs/PLAN.md)
 - **How each phase works:** [docs/LEARNING-NOTES.md](docs/LEARNING-NOTES.md)
 - **GitHub App setup:** [docs/SETUP-GITHUB-APP.md](docs/SETUP-GITHUB-APP.md)
-- **Status:** Phase 2: GitHub App auth, diff fetching and parsing are built; waiting on a real App to verify.
+- **Status:** Phase 2 done and verified on a real PR (App `priyam-pr-reviewer`): webhook → diff fetched and parsed.
   Next: Phase 3 (LangGraph review engine).
 
 ## Quick start
