@@ -213,7 +213,7 @@ LangGraph + `langchain-openai`, httpx, PyJWT (RS256), Pydantic v2, pytest + resp
 | **1** ✅ | **Ingress:** gateway (HMAC, forward) and webhook (parse, de-dupe, store, enqueue) | Signed fixture payloads give 401 for fakes, a stored row and a queued task, and a duplicate is skipped. Tests pass. |
 | **2** ✅ | **GitHub App:** you create the App (I write `SETUP-GITHUB-APP.md`), plus JWT → installation token (cached), diff fetch and a diff parser with line mapping | A real PR on your test repo produces a parsed diff in the worker logs |
 | **3** ✅ | **LangGraph engine:** 4 parallel agents, merge/de-dupe, summary, save to DB, offline CLI, a small eval set (diffs with planted SQL injection, secrets, N+1 and so on) | The CLI finds the planted issues, and the parallel run shows in the logs/trace |
-| **4** | **Reviewer:** one review with inline comments and a summary, idempotent posting | Opening a PR on the test repo → review comments appear on the right lines |
+| **4** ✅ | **Reviewer:** one review with inline comments and a summary, idempotent posting | Opening a PR on the test repo → review comments appear on the right lines |
 | **5** | **Learner:** merged-PR mining, conventions, 👍/👎 feedback, patterns put into prompts | After a merge, `repo_patterns` fills and the next review's prompt includes them |
 | **6** | **Observability:** metrics everywhere, Grafana dashboard, Langfuse traces | The dashboard shows a live review; the Langfuse trace has 4 agent spans |
 | **7** | **DevOps (files only):** Dockerfiles tidied, GitHub Actions CI, K8s manifests, ECR/EKS write-up | CI runs green locally (`act`, optional); manifests pass `kubectl apply --dry-run=client` |

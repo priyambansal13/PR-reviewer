@@ -88,6 +88,42 @@ class GitHubClient:
             json={"status": "completed", "conclusion": conclusion, "output": output},
         )
 
+    async def create_review(
+        self, repo: str, number: int, commit_id: str, body: str, event: str, comments: list[dict[str, Any]]
+    ) -> dict[str, Any]:
+        """One review = summary body + inline comments, posted atomically (all or nothing)."""
+        resp = await self._request(
+            "POST",
+            f"/repos/{repo}/pulls/{number}/reviews",
+            json={"commit_id": commit_id, "body": body, "event": event, "comments": comments},
+        )
+        return resp.json()
+
+    async def list_reviews(self, repo: str, number: int) -> list[dict[str, Any]]:
+        return await self._paginate(f"/repos/{repo}/pulls/{number}/reviews")
+
+    async def list_review_comments(self, repo: str, number: int, review_id: int) -> list[dict[str, Any]]:
+        # The per-review endpoint (/reviews/{id}/comments) only returns legacy diff `position`s, not `line`;
+        # the PR-wide endpoint has `line`, so list that and keep this review's comments.
+        comments = await self._paginate(f"/repos/{repo}/pulls/{number}/comments")
+        return [c for c in comments if c.get("pull_request_review_id") == review_id]
+
+    async def dismiss_review(self, repo: str, number: int, review_id: int, message: str) -> None:
+        await self._request(
+            "PUT",
+            f"/repos/{repo}/pulls/{number}/reviews/{review_id}/dismissals",
+            json={"message": message, "event": "DISMISS"},
+        )
+
+    async def _paginate(self, path: str, max_pages: int = 10) -> list[dict[str, Any]]:
+        items: list[dict[str, Any]] = []
+        for page in range(1, max_pages + 1):
+            batch = (await self._request("GET", path, params={"per_page": 100, "page": page})).json()
+            items.extend(batch)
+            if len(batch) < 100:
+                break
+        return items
+
     async def _request(
         self,
         method: str,

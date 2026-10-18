@@ -16,7 +16,7 @@ from sqlalchemy.orm import selectinload
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from common.celery_app import TASK_REVIEW_PR, celery_app  # noqa: E402
+from common.celery_app import TASK_POST_REVIEW, TASK_REVIEW_PR, celery_app  # noqa: E402
 from common.db.models import Finding, PullRequest, Repository, ReviewRun, RunStatus  # noqa: E402
 from common.db.session import dispose_engine, session_scope  # noqa: E402
 
@@ -100,11 +100,26 @@ async def rereview(ref: str) -> None:
                 started_at=None,
                 finished_at=None,
                 github_check_run_id=None,  # a fresh check run on the PR
+                github_review_id=None,
             )
         )
         run_id = str(r.id)
     celery_app.send_task(TASK_REVIEW_PR, kwargs={"run_id": run_id})
     print(f"queued run {run_id} again — follow with: ./setup.sh logs orchestrator-worker")
+
+
+async def repost(ref: str) -> None:
+    async with session_scope() as s:
+        r = await _find_run(s, ref)
+        await s.execute(update(Finding).where(Finding.run_id == r.id).values(posted=False, github_comment_id=None))
+        await s.execute(
+            update(ReviewRun)
+            .where(ReviewRun.id == r.id)
+            .values(status=RunStatus.saved, github_review_id=None, error=None)
+        )
+        run_id = str(r.id)
+    celery_app.send_task(TASK_POST_REVIEW, kwargs={"run_id": run_id})
+    print(f"posting run {run_id} again — follow with: ./setup.sh logs reviewer-worker")
 
 
 async def main(argv: list[str]) -> None:
@@ -116,6 +131,8 @@ async def main(argv: list[str]) -> None:
                 await show(ref)
             case ["rereview", ref]:
                 await rereview(ref)
+            case ["repost", ref]:
+                await repost(ref)
             case _:
                 print(__doc__)
                 sys.exit(1)

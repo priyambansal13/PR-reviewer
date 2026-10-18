@@ -10,8 +10,8 @@ Prometheus + Grafana · Langfuse.
 - **Plan & architecture:** [docs/PLAN.md](docs/PLAN.md)
 - **How each phase works:** [docs/LEARNING-NOTES.md](docs/LEARNING-NOTES.md)
 - **GitHub App setup:** [docs/SETUP-GITHUB-APP.md](docs/SETUP-GITHUB-APP.md)
-- **Status:** Phase 3 done: four parallel LangGraph agents review real PRs (about $0.0025 per review), and findings
-  are saved and shown as an "AI Review" check. Next: Phase 4 (inline comments on the PR).
+- **Status:** Phase 4 done: every PR gets an "AI Review" check and a GitHub review with inline comments and
+  one-click suggestions (about $0.0025 per review). Next: Phase 5 (Learner).
 
 ## Quick start
 
@@ -26,6 +26,7 @@ Needs Docker Desktop and [uv](https://docs.astral.sh/uv/).
 ./setup.sh runs      # recent reviews: status, findings, tokens, cost
 ./setup.sh show owner/repo#12       # findings of a PR's latest review
 ./setup.sh rereview owner/repo#12   # review it again
+./setup.sh repost owner/repo#12     # post the saved review again (no LLM cost; never double-posts)
 ./setup.sh logs orchestrator-worker
 ./setup.sh test      # run tests
 ./setup.sh psql      # poke at the database
@@ -36,7 +37,7 @@ Needs Docker Desktop and [uv](https://docs.astral.sh/uv/).
 |---|---|
 | Gateway (public entry) | `http://localhost:8000` — `POST /webhook/github` |
 | Webhook service | internal only (`webhook:8001` on the compose network) |
-| Workers | `orchestrator-worker` (queue `review`), `learner-worker` (queue `learn`) |
+| Workers | `orchestrator-worker` (queue `review`), `reviewer-worker` (queue `post`), `learner-worker` (queue `learn`) |
 | Postgres | `localhost:5435` (user/pass/db `reviewer`) |
 | Redis | `localhost:6380` |
 
@@ -44,7 +45,7 @@ Needs Docker Desktop and [uv](https://docs.astral.sh/uv/).
 
 ```
 common/          shared: config, models + async session, Celery app, GitHub App client, diff parser
-services/        gateway, webhook, orchestrator (worker), learner (worker); reviewer arrives in Phase 4
+services/        gateway, webhook, orchestrator (worker), reviewer (worker), learner (worker)
 scripts/         send_event.py (pretend to be GitHub), github_app.py (check App, set webhook URL)
 migrations/      Alembic (async)
 tests/           pytest — DB tests run in a rolled-back transaction

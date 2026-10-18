@@ -54,6 +54,13 @@ class FileDiff:
     def changed_lines(self) -> int:
         return self.additions + self.deletions
 
+    def line_content(self, new_no: int) -> str | None:
+        for h in self.hunks:
+            for ln in h.lines:
+                if ln.new_no == new_no:
+                    return ln.content
+        return None
+
     def commentable_lines(self) -> set[int]:
         """New-file line numbers GitHub will accept a RIGHT-side comment on (added + context lines)."""
         return {ln.new_no for h in self.hunks for ln in h.lines if ln.new_no is not None}

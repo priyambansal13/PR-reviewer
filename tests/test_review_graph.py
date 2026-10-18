@@ -29,9 +29,16 @@ FILES = parse_diff(DIFF)
 
 def af(line, title, severity="high", category="sql_injection", file="app/users.py", confidence=0.9, owasp=None):
     return AgentFinding(
-        file=file, line=line, severity=severity, category=category, owasp_id=owasp, title=title,
-        explanation="because", suggestion=None, confidence=confidence,
-    )  # fmt: skip
+        file=file,
+        line=line,
+        severity=severity,
+        category=category,
+        owasp_id=owasp,
+        title=title,
+        explanation="because",
+        suggestion=None,
+        confidence=confidence,
+    )
 
 
 class FakeLLM:
@@ -82,8 +89,10 @@ def test_merge_dedupes_across_agents_and_keeps_higher_severity():
 
 
 def test_merge_keeps_distinct_problems_on_nearby_lines():
-    raw = [("static", af(4, "Connection is never closed", category="resource_leak")),
-           ("security", af(5, "SQL injection", category="sql_injection"))]  # fmt: skip
+    raw = [
+        ("static", af(4, "Connection is never closed", category="resource_leak")),
+        ("security", af(5, "SQL injection", category="sql_injection")),
+    ]
     merged, _ = merge_findings(raw, FILES)
     assert len(merged) == 2
 
@@ -184,7 +193,9 @@ def test_only_security_sets_owasp_and_severity_is_capped_outside_remit():
 
 
 def test_same_line_findings_merge_with_plural_folding():
-    raw = [("security", af(5, "Hard-coded secret key", category="hard_coded_secret", owasp="A02")),
-           ("style", af(5, "Avoid hard-coded secrets", severity="low", category="magic_number"))]  # fmt: skip
+    raw = [
+        ("security", af(5, "Hard-coded secret key", category="hard_coded_secret", owasp="A02")),
+        ("style", af(5, "Avoid hard-coded secrets", severity="low", category="magic_number")),
+    ]
     merged, _ = merge_findings(raw, FILES)
     assert len(merged) == 1 and merged[0].agents == ["security", "style"]

@@ -82,6 +82,12 @@ services:
     command: ["celery", "-A", "services.orchestrator.worker", "worker", "-Q", "review", "-n", "orchestrator@%h",
               "--loglevel=INFO", "--concurrency=4"]
 
+  reviewer-worker:
+    <<: *app
+    container_name: prr-reviewer
+    command: ["celery", "-A", "services.reviewer.worker", "worker", "-Q", "post", "-n", "reviewer@%h",
+              "--loglevel=INFO", "--concurrency=2"]
+
   learner-worker:
     <<: *app
     container_name: prr-learner

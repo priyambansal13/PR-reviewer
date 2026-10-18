@@ -211,3 +211,64 @@ grabbed one first crashed. Failure isolation kept the review going with three ag
 (`common/aio.py`) gives each worker process **one long-lived loop** that runs every task. Connection pools (OpenAI,
 Postgres) now stay valid and warm between tasks. Three back-to-back reviews on the same worker process then ran all
 four agents cleanly.
+
+## Phase 4 — Posting the review on the PR
+
+```mermaid
+sequenceDiagram
+    participant O as Orchestrator
+    participant Q as Redis (queue "post")
+    participant R as Reviewer worker
+    participant GH as GitHub
+
+    O->>Q: send_task("reviewer.post_review", run_id)  after findings are saved
+    Q->>R: post_review(run_id)
+    R->>GH: GET pull — still open, still this head SHA?
+    R->>GH: GET compare diff — which lines are commentable now?
+    R->>R: build_review(): inline comments (top 25) + body (summary, overflow, hidden marker)
+    R->>GH: GET reviews — is our marker already there? (crash recovery)
+    R->>GH: POST /pulls/{n}/reviews {commit_id, event, body, comments[]}
+    alt 422 "own pull request"
+        R->>GH: retry as COMMENT (keep inline comments)
+    else 422 unresolvable line
+        R->>GH: retry body-only
+    end
+    R->>GH: dismiss our older CHANGES_REQUESTED reviews
+    R->>GH: GET /pulls/{n}/comments → link comment ids to findings (for 👍/👎 in Phase 5)
+```
+
+**One review, not many comments.** `POST /pulls/{n}/reviews` creates the summary and all inline comments
+*atomically*: the PR gets one notification and one "Review" entry, and either everything is posted or nothing is.
+
+**Separate service, separate queue.** The orchestrator only saves findings and enqueues `post_review`. Posting can
+fail or be retried (rate limits, GitHub outages) without paying for the LLM again, and `./setup.sh repost` re-posts
+saved findings for free.
+
+**Suggestions you can click.** A ```` ```suggestion ```` block inside a review comment becomes a *Commit suggestion*
+button. GitHub replaces **exactly the commented line(s)** with the block. So we only make one-click suggestions for
+**single-line** fixes, and copy the original line's indentation because models often drop it. Multi-line fixes are
+shown as normal code ("Suggested fix:"), because we can't be sure which lines they should replace, and a wrong
+one-click suggestion would corrupt the file.
+
+**Idempotency (never post twice).** Every review body ends with a hidden `<!-- pr-reviewer:run=<id> -->`. Before
+posting, the worker looks for that marker on the PR. If a previous attempt posted and then crashed before saving the
+review id, the retry finds it, records it, and links the comments instead of posting again. Verified live:
+`repost` on PR #3 found review 5561807217 and left the PR with exactly 1 review.
+
+**Lessons from the live run:**
+
+| What happened | Why | Fix |
+|---|---|---|
+| `422 Can not request changes on your own pull request` | PR #3 was opened *by the bot* (with its own token), and nobody may request changes on their own PR | Look at *why* the 422 happened: "own PR" → retry as `COMMENT`, keeping the inline comments; unresolvable line → retry body-only |
+| 0 of 12 comments linked to findings | `/reviews/{id}/comments` only returns legacy diff `position`s, not `line` | Use `/pulls/{n}/comments` (has `line` + `pull_request_review_id`) and filter by review |
+
+**Policy choices:**
+- The bot **never approves**: it posts `COMMENT`, or `REQUEST_CHANGES` when there's a critical/high finding. An
+  approval from a bot could satisfy branch protection without a human looking.
+- When a new commit is reviewed, the bot **dismisses its own older "changes requested" reviews**, so a PR the author
+  already fixed isn't blocked by stale feedback.
+- If the PR moved on to a newer commit or was closed while the review was running, nothing is posted (`skipped`).
+
+**Known limit:** a suggestion can be locally right but incomplete. For example, `os.getenv(...)` is suggested
+without adding `import os`. A suggestion block can only replace the commented line. The check-run details and the
+comment text explain the full fix.

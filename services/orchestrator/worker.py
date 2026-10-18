@@ -15,7 +15,7 @@ from sqlalchemy import delete, func, select, update
 from sqlalchemy.orm import selectinload
 
 from common import aio
-from common.celery_app import TASK_REVIEW_PR, celery_app
+from common.celery_app import TASK_POST_REVIEW, TASK_REVIEW_PR, celery_app
 from common.config import Settings, get_settings
 from common.db.models import Finding as FindingRow
 from common.db.models import PullRequest, ReviewRun, RunStatus
@@ -195,7 +195,7 @@ async def review(run_id: str) -> str:
                     + report.run_footer(runs, settings.openai_model, sel.skipped),
                     report.details(findings),
                 )
-                # Phase 4: enqueue reviewer.post_review here to post inline comments on the PR.
+                celery_app.send_task(TASK_POST_REVIEW, kwargs={"run_id": run_id})  # reviewer posts it to the PR
                 return "saved"
             except GitHubRetryable:
                 raise  # Celery retries the task; the retry reuses this check run
