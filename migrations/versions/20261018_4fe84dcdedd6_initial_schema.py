@@ -127,9 +127,7 @@ def upgrade() -> None:
         sa.Column("id", sa.UUID(), nullable=False),
         sa.Column("run_id", sa.UUID(), nullable=False),
         sa.Column("agents", postgresql.ARRAY(sa.String(length=32)), nullable=False),
-        sa.Column(
-            "severity", sa.Enum("critical", "high", "medium", "low", "info", name="severity"), nullable=False
-        ),
+        sa.Column("severity", sa.Enum("critical", "high", "medium", "low", "info", name="severity"), nullable=False),
         sa.Column("category", sa.String(length=64), nullable=False),
         sa.Column("owasp_id", sa.String(length=8), nullable=True),
         sa.Column("file", sa.Text(), nullable=False),

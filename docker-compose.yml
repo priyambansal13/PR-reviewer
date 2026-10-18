@@ -1,5 +1,25 @@
-# Phase 0: infrastructure only. Services, workers and monitoring are added in later phases (docs/PLAN.md §7).
 name: pr-reviewer
+
+# Every app container runs the same image; only `gateway` builds it (`./setup.sh start` runs the build first).
+x-app: &app
+  image: pr-reviewer:dev
+  pull_policy: never
+  env_file: .env
+  environment: &app-env
+    DATABASE_URL: postgresql+asyncpg://reviewer:reviewer@postgres:5432/reviewer
+    REDIS_URL: redis://redis:6379/0
+    WEBHOOK_SERVICE_URL: http://webhook:8001
+  volumes:
+    - ./secrets:/app/secrets:ro
+  depends_on:
+    postgres: { condition: service_healthy }
+    redis: { condition: service_healthy }
+  restart: unless-stopped
+
+x-http-health: &http-health
+  interval: 10s
+  timeout: 3s
+  retries: 5
 
 services:
   postgres:
@@ -32,6 +52,41 @@ services:
       interval: 5s
       timeout: 3s
       retries: 20
+
+  # Public entry point — the tunnel (and in AWS, the ALB) points here.
+  gateway:
+    <<: *app
+    container_name: prr-gateway
+    build: .
+    command: ["uvicorn", "services.gateway.app:app", "--host", "0.0.0.0", "--port", "8000"]
+    ports:
+      - "8000:8000"
+    depends_on:
+      webhook: { condition: service_healthy }
+    healthcheck:
+      <<: *http-health
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/healthz')"]
+
+  # Internal only: no host port, reachable just from the compose network.
+  webhook:
+    <<: *app
+    container_name: prr-webhook
+    command: ["uvicorn", "services.webhook.app:app", "--host", "0.0.0.0", "--port", "8001"]
+    healthcheck:
+      <<: *http-health
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8001/healthz')"]
+
+  orchestrator-worker:
+    <<: *app
+    container_name: prr-orchestrator
+    command: ["celery", "-A", "services.orchestrator.worker", "worker", "-Q", "review", "-n", "orchestrator@%h",
+              "--loglevel=INFO", "--concurrency=4"]
+
+  learner-worker:
+    <<: *app
+    container_name: prr-learner
+    command: ["celery", "-A", "services.learner.worker", "worker", "-Q", "learn", "-n", "learner@%h",
+              "--loglevel=INFO", "--concurrency=1"]
 
 volumes:
   pgdata:

@@ -20,8 +20,9 @@ class Settings(BaseSettings):
     github_webhook_secret: str = ""
     github_api_url: str = "https://api.github.com"
 
-    # Internal routing
+    # Internal routing. The gateway sends INTERNAL_TOKEN so internal services can tell its calls apart.
     webhook_service_url: str = "http://localhost:8001"
+    internal_token: str = ""
 
     # LLM (Phase 3)
     openai_api_key: str = ""

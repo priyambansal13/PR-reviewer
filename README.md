@@ -8,14 +8,19 @@ FastAPI microservices (gateway, webhook, orchestrator, reviewer, learner) · Cel
 Prometheus + Grafana · Langfuse.
 
 - **Plan & architecture:** [docs/PLAN.md](docs/PLAN.md)
-- **Status:** Phase 0 (scaffold) done — infra, shared package, schema. Next: Phase 1 (gateway + webhook ingress).
+- **How each phase works:** [docs/LEARNING-NOTES.md](docs/LEARNING-NOTES.md)
+- **Status:** Phase 1 done: signed webhooks → gateway → webhook service → Postgres + Redis → workers (stubs).
+  Next: Phase 2 (GitHub App auth + fetching diffs).
 
 ## Quick start
 
 Needs Docker Desktop and [uv](https://docs.astral.sh/uv/).
 
 ```bash
-./setup.sh start     # creates .env, installs deps, starts Postgres + Redis, runs migrations
+./setup.sh start     # creates .env (+ secrets), installs deps, migrates, builds and starts everything
+./setup.sh status    # containers and health
+./setup.sh event opened   # send a signed fake GitHub PR event to the gateway
+./setup.sh logs orchestrator-worker
 ./setup.sh test      # run tests
 ./setup.sh psql      # poke at the database
 ./setup.sh stop
@@ -23,6 +28,9 @@ Needs Docker Desktop and [uv](https://docs.astral.sh/uv/).
 
 | Thing | Where |
 |---|---|
+| Gateway (public entry) | `http://localhost:8000` — `POST /webhook/github` |
+| Webhook service | internal only (`webhook:8001` on the compose network) |
+| Workers | `orchestrator-worker` (queue `review`), `learner-worker` (queue `learn`) |
 | Postgres | `localhost:5435` (user/pass/db `reviewer`) |
 | Redis | `localhost:6380` |
 
@@ -30,7 +38,8 @@ Needs Docker Desktop and [uv](https://docs.astral.sh/uv/).
 
 ```
 common/          shared: config, SQLAlchemy models + async session, Celery app & queue names, logging
-services/        the five services (added from Phase 1)
+services/        gateway, webhook, orchestrator (worker), learner (worker); reviewer arrives in Phase 4
+scripts/         send_event.py — pretend to be GitHub
 migrations/      Alembic (async)
 tests/           pytest — DB tests run in a rolled-back transaction
 docs/            plan and setup guides
