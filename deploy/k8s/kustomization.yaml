@@ -1,0 +1,19 @@
+# kubectl apply -k deploy/k8s   (the deploy workflow sets the image to the ECR repo + git SHA first)
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: pr-reviewer
+labels:
+  - pairs: { app.kubernetes.io/part-of: pr-reviewer }
+    includeSelectors: false
+resources:
+  - namespace.yaml
+  - configmap.yaml
+  - gateway.yaml
+  - webhook.yaml
+  - workers.yaml
+  - ingress.yaml
+  - network-policies.yaml
+images:
+  - name: pr-reviewer
+    newName: 123456789012.dkr.ecr.us-east-1.amazonaws.com/pr-reviewer  # replaced by the deploy workflow
+    newTag: latest

@@ -1,0 +1,11 @@
+# Applied by the deploy workflow BEFORE the new Deployments roll out (Jobs are immutable, so it's
+# deleted and re-created each deploy).
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: pr-reviewer
+resources:
+  - migrate.yaml
+images:
+  - name: pr-reviewer
+    newName: 123456789012.dkr.ecr.us-east-1.amazonaws.com/pr-reviewer
+    newTag: latest

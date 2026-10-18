@@ -1,0 +1,19 @@
+# Optional (needs KEDA installed): scale the orchestrator on Celery backlog instead of CPU.
+# One extra pod per 5 queued reviews, 1..10 pods, back to 1 after 5 quiet minutes.
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata:
+  name: orchestrator-worker
+  namespace: pr-reviewer
+spec:
+  scaleTargetRef: { name: orchestrator-worker }
+  minReplicaCount: 1
+  maxReplicaCount: 10
+  cooldownPeriod: 300
+  triggers:
+    - type: redis
+      metadata:
+        listName: review        # the Celery queue (a Redis list)
+        listLength: "5"
+        enableTLS: "true"
+      authenticationRef: { name: redis-auth }

@@ -1,0 +1,23 @@
+# AWS Load Balancer Controller provisions an internet-facing ALB. Only the webhook path is routed:
+# /metrics, /docs etc. are not reachable from the internet at all.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: pr-reviewer
+  annotations:
+    alb.ingress.kubernetes.io/scheme: internet-facing
+    alb.ingress.kubernetes.io/target-type: ip
+    alb.ingress.kubernetes.io/listen-ports: '[{"HTTPS": 443}]'
+    alb.ingress.kubernetes.io/certificate-arn: arn:aws:acm:us-east-1:123456789012:certificate/CHANGE_ME
+    alb.ingress.kubernetes.io/ssl-policy: ELBSecurityPolicy-TLS13-1-2-2021-06
+    alb.ingress.kubernetes.io/healthcheck-path: /healthz
+spec:
+  ingressClassName: alb
+  rules:
+    - host: reviewer.example.com   # point a DNS record at the ALB
+      http:
+        paths:
+          - path: /webhook/github
+            pathType: Exact
+            backend:
+              service: { name: gateway, port: { number: 8000 } }

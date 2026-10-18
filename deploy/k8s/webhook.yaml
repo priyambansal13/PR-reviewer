@@ -1,0 +1,96 @@
+# Internal only: reachable from gateway pods (network-policies.yaml), never from the Ingress.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: webhook
+  labels: { app.kubernetes.io/name: webhook }
+spec:
+  replicas: 2
+  revisionHistoryLimit: 5
+  selector:
+    matchLabels: { app.kubernetes.io/name: webhook }
+  strategy:
+    rollingUpdate: { maxUnavailable: 0, maxSurge: 1 }   # never drop below the replica count during a rollout
+  template:
+    metadata:
+      labels: { app.kubernetes.io/name: webhook }
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8001"
+        prometheus.io/path: /metrics
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1001
+        runAsGroup: 1001
+        fsGroup: 1001
+        seccompProfile: { type: RuntimeDefault }
+      topologySpreadConstraints:   # spread replicas across availability zones
+        - maxSkew: 1
+          topologyKey: topology.kubernetes.io/zone
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels: { app.kubernetes.io/name: webhook }
+      containers:
+        - name: app
+          image: pr-reviewer
+          command: ["uvicorn", "services.webhook.app:app", "--host", "0.0.0.0", "--port", "8001", "--proxy-headers"]
+          ports:
+            - { name: http, containerPort: 8001 }
+          envFrom:
+            - configMapRef: { name: pr-reviewer-config }
+            - secretRef: { name: pr-reviewer-secrets }
+          readinessProbe:
+            httpGet: { path: /healthz, port: http }
+            periodSeconds: 5
+          livenessProbe:
+            httpGet: { path: /healthz, port: http }
+            periodSeconds: 15
+            failureThreshold: 4
+          resources:
+            requests: { cpu: 100m, memory: 192Mi }
+            limits: { memory: 384Mi }
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: [ALL] }
+          volumeMounts:
+            - { name: github-app-key, mountPath: /app/secrets, readOnly: true }
+            - { name: tmp, mountPath: /tmp }
+      volumes:
+        - name: github-app-key
+          secret: { secretName: github-app-key, defaultMode: 0440 }
+        - name: tmp
+          emptyDir: { sizeLimit: 256Mi }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: webhook
+  labels: { app.kubernetes.io/name: webhook }
+spec:
+  selector: { app.kubernetes.io/name: webhook }
+  ports:
+    - { name: http, port: 8001, targetPort: http }
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: webhook
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels: { app.kubernetes.io/name: webhook }
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: webhook
+spec:
+  scaleTargetRef: { apiVersion: apps/v1, kind: Deployment, name: webhook }
+  minReplicas: 2
+  maxReplicas: 6
+  metrics:
+    - type: Resource
+      resource: { name: cpu, target: { type: Utilization, averageUtilization: 70 } }

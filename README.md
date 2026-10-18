@@ -1,5 +1,7 @@
 # AI PR Code Reviewer
 
+[![CI](https://github.com/priyambansal13/PR-reviewer/actions/workflows/ci.yml/badge.svg)](https://github.com/priyambansal13/PR-reviewer/actions/workflows/ci.yml)
+
 Event-driven GitHub Pull Request reviewer. A GitHub App webhook triggers four parallel LangGraph agents running on
 GPT-4o-mini: Static Analysis, Security (OWASP Top 10), Architecture and Code Style. Their merged findings are posted
 back to the PR as inline comments. A Learner service picks up each repo's conventions from merged PRs.
@@ -10,8 +12,9 @@ Prometheus + Grafana · Langfuse.
 - **Plan & architecture:** [docs/PLAN.md](docs/PLAN.md)
 - **How each phase works:** [docs/LEARNING-NOTES.md](docs/LEARNING-NOTES.md)
 - **GitHub App setup:** [docs/SETUP-GITHUB-APP.md](docs/SETUP-GITHUB-APP.md)
-- **Status:** Phase 6 done: Prometheus + Grafana dashboard, and a Langfuse trace for every review.
-  Next: Phase 7 (CI/CD and Kubernetes files).
+- **Deploying to AWS (EKS):** [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md)
+- **Status:** all 7 phases done: runs locally end to end on real PRs; CI on every push; EKS manifests and deploy
+  workflow ready (not deployed).
 
 ## Quick start
 
@@ -54,6 +57,8 @@ services/        gateway, webhook, orchestrator (worker), reviewer (worker), lea
 scripts/         send_event.py (pretend to be GitHub), github_app.py (check App, set webhook URL)
 migrations/      Alembic (async)
 monitoring/      prometheus.yml, Grafana provisioning, dashboard generator (build_dashboard.py)
+deploy/k8s/      Kubernetes manifests (kustomize): Deployments, HPA, PDB, Ingress (ALB), NetworkPolicies, migrate Job
+.github/         ci.yml (lint, tests, manifests, image) and deploy.yml (manual: ECR → EKS)
 tests/           pytest — DB tests run in a rolled-back transaction
 docs/            plan and setup guides
 ```

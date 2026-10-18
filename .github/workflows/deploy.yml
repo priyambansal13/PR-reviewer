@@ -1,0 +1,87 @@
+# Build → push to ECR → migrate → roll out to EKS. Manual only, and only once the AWS settings below exist.
+#
+# Repository → Settings → Secrets and variables → Actions → Variables:
+#   AWS_REGION        e.g. us-east-1
+#   AWS_ROLE_ARN      IAM role trusted for GitHub OIDC (no long-lived AWS keys in GitHub)
+#   ECR_REPOSITORY    e.g. pr-reviewer
+#   EKS_CLUSTER       cluster name
+# Use a protected "production" environment to require an approval before each deploy.
+name: Deploy
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: Git ref to deploy
+        default: main
+
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false   # never cancel a half-finished rollout
+
+permissions:
+  id-token: write   # GitHub OIDC token, exchanged for short-lived AWS credentials
+  contents: read
+
+jobs:
+  deploy:
+    if: vars.AWS_ROLE_ARN != ''
+    runs-on: ubuntu-latest
+    environment: production
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref }}
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      - id: ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Build and push image (tagged with the commit SHA)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: ${{ steps.ecr.outputs.registry }}/${{ vars.ECR_REPOSITORY }}:${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Point kubectl at the cluster
+        run: aws eks update-kubeconfig --name "${{ vars.EKS_CLUSTER }}" --region "${{ vars.AWS_REGION }}"
+
+      - uses: imranismail/setup-kustomize@v2
+
+      - name: Set image in manifests
+        env:
+          IMAGE: ${{ steps.ecr.outputs.registry }}/${{ vars.ECR_REPOSITORY }}:${{ github.sha }}
+        run: |
+          (cd deploy/k8s && kustomize edit set image "pr-reviewer=$IMAGE")
+          (cd deploy/k8s/jobs && kustomize edit set image "pr-reviewer=$IMAGE")
+
+      - name: Migrate the database (before new code starts)
+        run: |
+          kubectl apply -f deploy/k8s/namespace.yaml
+          kubectl -n pr-reviewer delete job migrate --ignore-not-found
+          kubectl apply -k deploy/k8s/jobs
+          kubectl -n pr-reviewer wait --for=condition=complete job/migrate --timeout=300s
+
+      - name: Roll out
+        run: |
+          kubectl apply -k deploy/k8s
+          for d in gateway webhook orchestrator-worker reviewer-worker learner-worker; do
+            kubectl -n pr-reviewer rollout status deployment/$d --timeout=300s
+          done
+
+      - name: Roll back on failure
+        if: failure()
+        run: |
+          for d in gateway webhook orchestrator-worker reviewer-worker learner-worker; do
+            kubectl -n pr-reviewer rollout undo deployment/$d || true
+          done

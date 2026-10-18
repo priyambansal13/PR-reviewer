@@ -1,0 +1,16 @@
+# Non-secret settings. Secrets (DB/Redis URLs, GitHub, OpenAI, Langfuse) live in the `pr-reviewer-secrets`
+# Secret; see secret.example.yaml. Keys match common/config.py (pydantic-settings reads env vars).
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: pr-reviewer-config
+data:
+  WEBHOOK_SERVICE_URL: http://webhook:8001
+  GITHUB_PRIVATE_KEY_PATH: /app/secrets/github-app.pem
+  GITHUB_API_URL: https://api.github.com
+  OPENAI_MODEL: gpt-4o-mini
+  MAX_DIFF_LINES: "3000"
+  MAX_INLINE_COMMENTS: "25"
+  DAILY_TOKEN_BUDGET: "2000000"
+  LANGFUSE_HOST: https://us.cloud.langfuse.com
+  LOG_LEVEL: INFO

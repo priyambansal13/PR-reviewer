@@ -400,3 +400,22 @@ Two gotchas:
 - **The SDK caches one client per public key.** Testing several hosts in one Python process gave misleading
   results (all "OK"), because every later client reused the first host. Each host had to be tested in a fresh
   process.
+
+## Phase 7 — CI/CD and Kubernetes (files only)
+
+See [DEPLOYMENT.md](DEPLOYMENT.md) for the AWS mapping, security choices and cost.
+
+**CI tests against real services.** GitHub Actions `services:` start Postgres and Redis on the *same host ports* as
+docker-compose (5435, 6380), so the test suite runs unchanged in CI, including the real `ON CONFLICT`
+de-duplication. CI also runs migrations up → down → up, checks the Grafana dashboard JSON matches its generator,
+validates the rendered Kubernetes manifests with **kubeconform** (strict, Kubernetes 1.31), and builds the image.
+
+**Validate what a schema can't.** kubeconform proves the YAML is well-formed Kubernetes. It can't tell whether the
+app survives `readOnlyRootFilesystem: true`. So the same image was run locally with `--read-only --cap-drop ALL
+--user 1001`: gateway healthy, worker ready and serving metrics, migrations ran, writes refused.
+
+**Why workers don't autoscale on CPU.** An LLM worker spends its time waiting on the network, so its CPU stays near
+zero while the queue grows. Scale on the thing that measures the backlog (Redis list length → KEDA), not on CPU.
+
+**Migrate before rollout, compatibly.** During a rolling update, old and new pods run side by side on the *already
+migrated* schema. Every migration must therefore work with the previous release's code (expand/contract).
