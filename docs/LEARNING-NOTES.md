@@ -203,3 +203,11 @@ uv run python -m services.orchestrator.cli /tmp/change.patch --title "My change"
 ./setup.sh show priyambansal13/PR-reviewer#1      # findings of a PR's latest run
 ./setup.sh rereview priyambansal13/PR-reviewer#1  # run it again
 ```
+
+**Bug found live: "Event loop is closed".** On PR #3 the architecture agent died in 0.0 s. Each Celery task used
+to call `asyncio.run()`, which creates and then *closes* an event loop per task. The OpenAI SDK keeps one HTTP
+connection pool per process, so the next task found pooled connections tied to the dead loop, and whichever agent
+grabbed one first crashed. Failure isolation kept the review going with three agents, but the real fix
+(`common/aio.py`) gives each worker process **one long-lived loop** that runs every task. Connection pools (OpenAI,
+Postgres) now stay valid and warm between tasks. Three back-to-back reviews on the same worker process then ran all
+four agents cleanly.

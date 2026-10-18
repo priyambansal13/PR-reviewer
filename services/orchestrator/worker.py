@@ -3,7 +3,6 @@
 Run: uv run celery -A services.orchestrator.worker worker -Q review -n orchestrator@%h --loglevel=INFO
 """
 
-import asyncio
 import logging
 import uuid
 from datetime import UTC, datetime
@@ -15,11 +14,12 @@ from redis.asyncio import Redis
 from sqlalchemy import delete, func, select, update
 from sqlalchemy.orm import selectinload
 
+from common import aio
 from common.celery_app import TASK_REVIEW_PR, celery_app
 from common.config import Settings, get_settings
 from common.db.models import Finding as FindingRow
 from common.db.models import PullRequest, ReviewRun, RunStatus
-from common.db.session import dispose_engine, session_scope
+from common.db.session import session_scope
 from common.github import GitHubAppAuth, GitHubClient, GitHubError, GitHubRetryable
 from common.logging import setup_logging
 from services.orchestrator import report
@@ -242,13 +242,6 @@ async def _save(rid: uuid.UUID, findings: list, state: dict, tin: int, tout: int
         )
 
 
-async def _review_task(run_id: str) -> str:
-    try:
-        return await review(run_id)
-    finally:
-        await dispose_engine()
-
-
 @celery_app.task(
     name=TASK_REVIEW_PR,
     bind=True,
@@ -259,21 +252,18 @@ async def _review_task(run_id: str) -> str:
 )
 def review_pr(self, run_id: str) -> str:
     try:
-        return asyncio.run(_review_task(run_id))
+        return aio.run(review(run_id))
     except GitHubRetryable:
         if self.request.retries >= self.max_retries:
-            asyncio.run(_fail(run_id, "GitHub kept failing (rate limit / outage)"))
+            aio.run(_fail(run_id, "GitHub kept failing (rate limit / outage)"))
         raise
     except Exception as exc:
-        asyncio.run(_fail(run_id, f"{type(exc).__name__}: {exc}"))
+        aio.run(_fail(run_id, f"{type(exc).__name__}: {exc}"))
         raise
 
 
 async def _fail(run_id: str, error: str) -> None:
-    try:
-        await _set(uuid.UUID(run_id), status=RunStatus.failed, error=error[:2000], finished_at=datetime.now(UTC))
-    finally:
-        await dispose_engine()
+    await _set(uuid.UUID(run_id), status=RunStatus.failed, error=error[:2000], finished_at=datetime.now(UTC))
 
 
 logging.getLogger("httpx").setLevel(logging.WARNING)  # one INFO line per OpenAI/GitHub request is too noisy

@@ -1,7 +1,8 @@
 """Async engine + session helpers.
 
-Celery tasks are sync functions that call `asyncio.run(...)`, which makes a fresh event loop per task.
-asyncpg connections are bound to the loop that created them, so the engine is cached per event loop.
+asyncpg connections are bound to the event loop that created them, so the engine is cached per loop.
+Celery workers run every task on one long-lived loop per process (common/aio.py), so they share one engine;
+one-off scripts using asyncio.run() get their own and call dispose_engine() at the end.
 """
 
 import asyncio

@@ -19,3 +19,14 @@ def test_each_task_has_its_own_queue():
 def test_redis_broker_is_reachable():
     with celery_app.connection_for_write() as conn:
         conn.ensure_connection(max_retries=2)
+
+
+def test_aio_run_reuses_one_loop_per_process():
+    import asyncio
+
+    from common import aio
+
+    async def current():
+        return asyncio.get_running_loop()
+
+    assert aio.run(current()) is aio.run(current())
