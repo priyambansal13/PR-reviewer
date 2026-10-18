@@ -62,6 +62,32 @@ class GitHubClient:
                 break
         return files
 
+    async def create_check_run(self, repo: str, head_sha: str, name: str, title: str, summary: str) -> int:
+        """Shows up in the PR's checks box as "in progress". Needs the App permission Checks: write."""
+        resp = await self._request(
+            "POST",
+            f"/repos/{repo}/check-runs",
+            json={
+                "name": name,
+                "head_sha": head_sha,
+                "status": "in_progress",
+                "output": {"title": title, "summary": summary},
+            },
+        )
+        return resp.json()["id"]
+
+    async def complete_check_run(
+        self, repo: str, check_run_id: int, conclusion: str, title: str, summary: str, text: str | None = None
+    ) -> None:
+        output = {"title": title[:255], "summary": summary[:65_000]}
+        if text:
+            output["text"] = text[:65_000]
+        await self._request(
+            "PATCH",
+            f"/repos/{repo}/check-runs/{check_run_id}",
+            json={"status": "completed", "conclusion": conclusion, "output": output},
+        )
+
     async def _request(
         self,
         method: str,

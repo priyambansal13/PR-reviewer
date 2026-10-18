@@ -10,8 +10,8 @@ Prometheus + Grafana · Langfuse.
 - **Plan & architecture:** [docs/PLAN.md](docs/PLAN.md)
 - **How each phase works:** [docs/LEARNING-NOTES.md](docs/LEARNING-NOTES.md)
 - **GitHub App setup:** [docs/SETUP-GITHUB-APP.md](docs/SETUP-GITHUB-APP.md)
-- **Status:** Phase 2 done and verified on a real PR (App `priyam-pr-reviewer`): webhook → diff fetched and parsed.
-  Next: Phase 3 (LangGraph review engine).
+- **Status:** Phase 3 done: four parallel LangGraph agents review real PRs (about $0.0025 per review), and findings
+  are saved and shown as an "AI Review" check. Next: Phase 4 (inline comments on the PR).
 
 ## Quick start
 
@@ -23,6 +23,9 @@ Needs Docker Desktop and [uv](https://docs.astral.sh/uv/).
 ./setup.sh tunnel    # public HTTPS URL for GitHub (updates the App's webhook URL automatically)
 ./setup.sh github    # check the GitHub App and its installations
 ./setup.sh event opened   # send a signed fake GitHub PR event to the gateway
+./setup.sh runs      # recent reviews: status, findings, tokens, cost
+./setup.sh show owner/repo#12       # findings of a PR's latest review
+./setup.sh rereview owner/repo#12   # review it again
 ./setup.sh logs orchestrator-worker
 ./setup.sh test      # run tests
 ./setup.sh psql      # poke at the database

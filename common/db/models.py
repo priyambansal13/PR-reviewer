@@ -125,8 +125,10 @@ class ReviewRun(TimestampMixin, Base):
     tokens_out: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
     cost_usd: Mapped[Decimal] = mapped_column(Numeric(10, 6), default=0, server_default="0")
     summary: Mapped[str | None] = mapped_column(Text)
+    verdict: Mapped[str | None] = mapped_column(String(20))  # approve | comment | request_changes
     langfuse_trace_id: Mapped[str | None] = mapped_column(String(64))
     github_review_id: Mapped[int | None] = mapped_column(BigInteger)
+    github_check_run_id: Mapped[int | None] = mapped_column(BigInteger)
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     error: Mapped[str | None] = mapped_column(Text)

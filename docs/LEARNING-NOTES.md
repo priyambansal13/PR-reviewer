@@ -140,3 +140,66 @@ for the whole PR. Skipped files are listed (Phase 4 puts them in the summary), s
 **Retries.** 5xx, 429 and rate-limit 403s are retried inside the client with backoff, honouring `Retry-After`. If
 GitHub is still failing, `GitHubRetryable` makes Celery retry the whole task later (30 s, 60 s, … up to 10 min, 5
 times) before the run is marked `failed`. A 404 or 422 isn't retried, because retrying won't fix it.
+
+## Phase 3 — Four parallel agents with LangGraph
+
+```mermaid
+flowchart LR
+    START --> static & security & architecture & style
+    static & security & architecture & style --> merge --> summarize --> END
+```
+
+**Parallel fan-out and fan-in** (`services/orchestrator/graph/graph.py`). LangGraph runs in *supersteps*. Every node
+whose inputs are ready runs in the same superstep, concurrently. The four agents all hang off `START` with no edges
+between them, so they run together. `merge` has an edge from each agent, so it waits for all four (fan-in). On the
+real PR the four agents finished within 0.8 s of each other (6.6–7.4 s each), so the whole review took about as long
+as the slowest agent, not the sum of all four. `test_four_agents_run_in_parallel_and_merge` proves it: four agents
+that each sleep 0.3 s finish in under 0.9 s, with all four in flight at once.
+
+**Reducers.** Four nodes write `raw_findings` in the same superstep. With a plain field the last writer would win
+and three agents' work would vanish. `Annotated[list, operator.add]` tells LangGraph to *concatenate* the
+updates instead.
+
+**Structured output.** `llm.with_structured_output(AgentReport, include_raw=True)` uses OpenAI's strict JSON-schema
+mode, so the model *cannot* return anything but the Pydantic shape. Strict mode requires every field, which is why
+"optional" fields are `X | None` with no default. `include_raw=True` also returns the raw message, which carries the
+token usage used for cost.
+
+**Failure isolation.** Each agent node catches its own errors and records them on `AgentRun`. A timed-out style agent
+still leaves you a security review. The summary notes which reviewers failed, and the run fails only if *all* of
+them did.
+
+**What tuning taught us** (PR #1, before → after):
+
+| Problem seen in the raw output | Fix |
+|---|---|
+| Every agent reported the obvious SQL injection; static/architecture missed their own issues (leaked connections, unchecked `is_admin`) | Prompts: "security issues belong to the security reviewer, do NOT report them" + a concrete checklist per agent |
+| SQL injection labelled A01 (by non-security agents), winning the merge | Only the security agent may set `owasp_id` |
+| Style agent reporting "medium" issues | Severity cap: style ≤ low, architecture ≤ medium |
+| "Hard-coded secret key" and "Avoid hard-coded secrets" on the same line kept separately | Same-line matching is looser, and plurals fold ("secrets" = "secret") |
+
+Result: correct OWASP ids (A02/A03/A05/A01). It now also finds the 3 leaked connections and the missing authorization
+check, for about $0.0025 a review. LLM reviews are not deterministic: the N+1 query loop is found on some runs and
+not others. That's why the merge step validates everything and why the Learner (Phase 5) exists.
+
+**Merge rules** (`graph/merge.py`):
+1. Drop confidence < 0.5 and unknown files; a path like `users.py` is matched to `app/users.py`.
+2. Line not commentable on GitHub → keep the finding but make it file-level (it goes in the summary).
+3. Same file, same line (or within 2 lines with the same category or similar title) → one finding. The agents' names
+   are combined, the worse severity wins, and the first suggestion is kept.
+4. Sort by severity. Each finding gets a `fingerprint` (category + normalised title words) so the Learner can count
+   recurring problems across PRs.
+
+**Verdict by rule, not by model:** any critical/high → `request_changes`; any low/medium → `comment`; else
+`approve`. The model writes the prose summary, but code decides the verdict, because a verdict should be
+predictable.
+
+**Try it without GitHub:**
+
+```bash
+git diff main > /tmp/change.patch
+uv run python -m services.orchestrator.cli /tmp/change.patch --title "My change" --details
+./setup.sh runs                                   # recent runs, tokens, cost
+./setup.sh show priyambansal13/PR-reviewer#1      # findings of a PR's latest run
+./setup.sh rereview priyambansal13/PR-reviewer#1  # run it again
+```

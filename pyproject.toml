@@ -16,6 +16,9 @@ dependencies = [
     "httpx>=0.28",
     "pyjwt[crypto]>=2.10",
     "prometheus-client>=0.21",
+    "langgraph>=0.6",
+    "langchain-openai>=0.3",
+    "langchain-core>=0.3",
 ]
 
 [dependency-groups]

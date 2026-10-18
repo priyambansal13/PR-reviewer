@@ -7,6 +7,9 @@
 #   tunnel   start a public HTTPS URL for the gateway (cloudflared) and point the GitHub App at it
 #   tunnel-stop
 #   github   check the GitHub App: identity, permissions, installations (and sync repos to the DB)
+#   runs     recent review runs
+#   show     findings of a PR's latest run:    ./setup.sh show owner/repo#12
+#   rereview reset a PR's latest run and review it again:  ./setup.sh rereview owner/repo#12
 #   migrate  apply database migrations
 #   test     run the test suite (needs `start` first)
 #   lint     ruff check + format check
@@ -104,6 +107,9 @@ case "${1:-}" in
   tunnel)  cmd_tunnel ;;
   tunnel-stop) cmd_tunnel_stop ;;
   github)  uv run python scripts/github_app.py check ;;
+  runs)    uv run python scripts/runs.py list ;;
+  show)    uv run python scripts/runs.py show "$2" ;;
+  rereview) uv run python scripts/runs.py rereview "$2" ;;
   event)   uv run python scripts/send_event.py "${@:2}" ;;
   test)    uv run pytest "${@:2}" ;;
   lint)    uv run ruff check . && uv run ruff format --check . ;;
@@ -112,5 +118,5 @@ case "${1:-}" in
   reset)
     read -r -p "Delete ALL pr-reviewer containers and data? [y/N] " ok
     [[ "$ok" == "y" ]] && docker compose down -v ;;
-  *) sed -n '2,16p' "$0"; exit 1 ;;
+  *) sed -n '2,19p' "$0"; exit 1 ;;
 esac

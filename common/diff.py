@@ -213,15 +213,44 @@ def _unquote(s: str) -> str:
 
 SKIP_GLOBS = (
     # lockfiles
-    "*package-lock.json", "*yarn.lock", "*pnpm-lock.yaml", "*poetry.lock", "*uv.lock", "*Pipfile.lock",
-    "*Cargo.lock", "*Gemfile.lock", "*composer.lock", "*go.sum",
+    "*package-lock.json",
+    "*yarn.lock",
+    "*pnpm-lock.yaml",
+    "*poetry.lock",
+    "*uv.lock",
+    "*Pipfile.lock",
+    "*Cargo.lock",
+    "*Gemfile.lock",
+    "*composer.lock",
+    "*go.sum",
     # generated / bundled
-    "*.min.js", "*.min.css", "*.map", "*_pb2.py", "*_pb2_grpc.py", "*.pb.go", "*.snap", "*.generated.*",
+    "*.min.js",
+    "*.min.css",
+    "*.map",
+    "*_pb2.py",
+    "*_pb2_grpc.py",
+    "*.pb.go",
+    "*.snap",
+    "*.generated.*",
     # vendored / build output
-    "vendor/*", "*/vendor/*", "node_modules/*", "*/node_modules/*", "dist/*", "build/*",
+    "vendor/*",
+    "*/vendor/*",
+    "node_modules/*",
+    "*/node_modules/*",
+    "dist/*",
+    "build/*",
     # assets
-    "*.svg", "*.png", "*.jpg", "*.jpeg", "*.gif", "*.ico", "*.pdf", "*.woff", "*.woff2", "*.ttf",
-)  # fmt: skip
+    "*.svg",
+    "*.png",
+    "*.jpg",
+    "*.jpeg",
+    "*.gif",
+    "*.ico",
+    "*.pdf",
+    "*.woff",
+    "*.woff2",
+    "*.ttf",
+)
 
 MAX_FILE_CHANGED_LINES = 1500
 

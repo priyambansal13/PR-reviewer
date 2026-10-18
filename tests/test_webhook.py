@@ -149,7 +149,8 @@ async def test_queue_down_returns_503_and_allows_redelivery(client, queue, db):
     resp = await send(client, pr_event(), delivery=d)
     assert resp.status_code == 503
     assert await db.get(WebhookDelivery, d) is None
-    assert (await db.scalars(select(ReviewRun))).all() == []
+    runs = await db.scalars(select(ReviewRun).join(PullRequest).where(PullRequest.repo_id == 100))
+    assert runs.all() == []
 
     queue.fail = False  # Redis is back; GitHub redelivers the same delivery id
     assert (await send(client, pr_event(), delivery=d)).json()["result"] == "queued"
