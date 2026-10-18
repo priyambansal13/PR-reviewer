@@ -388,3 +388,15 @@ whose trace id is derived from the run (`create_trace_id(seed=…)`), so the id 
 Langfuse *session*. A LangChain `CallbackHandler` in the graph's config records every LLM call, including the four
 parallel agents, as children of that span. Without keys, `trace()` is a no-op, so tracing can never break a
 review.
+
+**Verified on PR #3** (trace `8c2160d9…`): one root chain per review, with 4 `AGENT` spans (the LangGraph nodes) and
+5 `GENERATION`s. **All four agents start at +1.1 s together** and finish at 7.8–9.0 s; the summary runs after them
+(9.1–10.4 s). This is the parallel fan-out, visible on a timeline. Langfuse records the model
+(`gpt-4o-mini-2024-07-18`), tokens and cost per call; its total ($0.0027) matches our own Prometheus cost metric.
+
+Two gotchas:
+- **Region-specific hosts.** Keys only work on their region's host. A US project on the EU host answers *401
+  Invalid credentials*. `LANGFUSE_HOST=https://us.cloud.langfuse.com` fixed it.
+- **The SDK caches one client per public key.** Testing several hosts in one Python process gave misleading
+  results (all "OK"), because every later client reused the first host. Each host had to be tested in a fresh
+  process.

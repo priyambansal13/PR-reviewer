@@ -10,7 +10,7 @@ Prometheus + Grafana · Langfuse.
 - **Plan & architecture:** [docs/PLAN.md](docs/PLAN.md)
 - **How each phase works:** [docs/LEARNING-NOTES.md](docs/LEARNING-NOTES.md)
 - **GitHub App setup:** [docs/SETUP-GITHUB-APP.md](docs/SETUP-GITHUB-APP.md)
-- **Status:** Phase 6: Prometheus and Grafana are live; Langfuse tracing switches on once its keys are in `.env`.
+- **Status:** Phase 6 done: Prometheus + Grafana dashboard, and a Langfuse trace for every review.
   Next: Phase 7 (CI/CD and Kubernetes files).
 
 ## Quick start
