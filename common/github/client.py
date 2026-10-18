@@ -115,6 +115,9 @@ class GitHubClient:
             json={"message": message, "event": "DISMISS"},
         )
 
+    async def list_comment_reactions(self, repo: str, comment_id: int) -> list[dict[str, Any]]:
+        return await self._paginate(f"/repos/{repo}/pulls/comments/{comment_id}/reactions")
+
     async def _paginate(self, path: str, max_pages: int = 10) -> list[dict[str, Any]]:
         items: list[dict[str, Any]] = []
         for page in range(1, max_pages + 1):

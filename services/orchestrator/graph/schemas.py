@@ -71,3 +71,4 @@ class ReviewContext:
     files: list  # list[common.diff.FileDiff]
     conventions: list[str] = field(default_factory=list)
     frequent_issues: list[str] = field(default_factory=list)
+    suppressed_categories: list[str] = field(default_factory=list)  # repeatedly 👎'd by the team

@@ -72,7 +72,15 @@ def system_prompt(agent: str) -> str:
     return f"{SHARED_RULES}\n{REMITS[agent]}"
 
 
-def user_prompt(repo: str, number: int, title: str, diff: str, conventions: list[str], frequent: list[str]) -> str:
+def user_prompt(
+    repo: str,
+    number: int,
+    title: str,
+    diff: str,
+    conventions: list[str],
+    frequent: list[str],
+    suppressed: list[str] = (),
+) -> str:
     parts = [f"Repository: {repo}", f"Pull request #{number}: {title}"]
     if conventions:
         parts.append(
@@ -82,6 +90,12 @@ def user_prompt(repo: str, number: int, title: str, diff: str, conventions: list
     if frequent:
         recurring = "\n".join(f"- {p}" for p in frequent)
         parts.append(f"Problems that keep recurring in this repository (check for them):\n{recurring}")
+    if suppressed:
+        unwanted = ", ".join(c.replace("_", " ") for c in suppressed)
+        parts.append(
+            f"This team has repeatedly marked these kinds of comments as unhelpful (👎): {unwanted}. "
+            "Do not report them unless the problem is high or critical severity."
+        )
     parts.append(f"<diff>\n{diff}\n</diff>")
     return "\n\n".join(parts)
 

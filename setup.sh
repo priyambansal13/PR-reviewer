@@ -11,6 +11,8 @@
 #   show     findings of a PR's latest run:    ./setup.sh show owner/repo#12
 #   rereview reset a PR's latest run and review it again:  ./setup.sh rereview owner/repo#12
 #   repost   post a PR's saved review again (no LLM calls):  ./setup.sh repost owner/repo#12
+#   learn    run the Learner on a PR now:  ./setup.sh learn owner/repo#12
+#   knowledge  what the Learner knows about a repo:  ./setup.sh knowledge owner/repo
 #   migrate  apply database migrations
 #   test     run the test suite (needs `start` first)
 #   lint     ruff check + format check
@@ -112,6 +114,8 @@ case "${1:-}" in
   show)    uv run python scripts/runs.py show "$2" ;;
   rereview) uv run python scripts/runs.py rereview "$2" ;;
   repost)  uv run python scripts/runs.py repost "$2" ;;
+  learn)   uv run python scripts/runs.py learn "$2" ;;
+  knowledge) uv run python scripts/runs.py knowledge "$2" ;;
   event)   uv run python scripts/send_event.py "${@:2}" ;;
   test)    uv run pytest "${@:2}" ;;
   lint)    uv run ruff check . && uv run ruff format --check . ;;
@@ -120,5 +124,5 @@ case "${1:-}" in
   reset)
     read -r -p "Delete ALL pr-reviewer containers and data? [y/N] " ok
     [[ "$ok" == "y" ]] && docker compose down -v ;;
-  *) sed -n '2,20p' "$0"; exit 1 ;;
+  *) sed -n '2,22p' "$0"; exit 1 ;;
 esac

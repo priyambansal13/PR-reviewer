@@ -102,6 +102,7 @@ class PullRequest(TimestampMixin, Base):
     draft: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
     merged: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
     merged_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    learned_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))  # set by the Learner
 
     repository: Mapped[Repository] = relationship(back_populates="pull_requests")
     review_runs: Mapped[list["ReviewRun"]] = relationship(back_populates="pull_request")
@@ -156,6 +157,8 @@ class Finding(TimestampMixin, Base):
     fingerprint: Mapped[str] = mapped_column(String(64), index=True)  # stable hash used by the Learner
     posted: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
     github_comment_id: Mapped[int | None] = mapped_column(BigInteger)
+    thumbs_up: Mapped[int] = mapped_column(Integer, default=0, server_default="0")  # 👍 from humans
+    thumbs_down: Mapped[int] = mapped_column(Integer, default=0, server_default="0")  # 👎 from humans
 
     run: Mapped[ReviewRun] = relationship(back_populates="findings")
 

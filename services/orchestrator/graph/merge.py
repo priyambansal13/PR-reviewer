@@ -14,15 +14,25 @@ _WORD = re.compile(r"[a-z0-9]+")
 _STOP = {"a", "an", "the", "of", "in", "on", "to", "is", "be", "for", "and", "or", "with", "this", "that", "use"}
 
 
-def merge_findings(raw: list[tuple[str, AgentFinding]], files: list[FileDiff]) -> tuple[list[Finding], dict]:
-    """Returns the merged findings plus counters explaining what was dropped (useful for tuning)."""
+def merge_findings(
+    raw: list[tuple[str, AgentFinding]], files: list[FileDiff], suppressed: set[str] | frozenset = frozenset()
+) -> tuple[list[Finding], dict]:
+    """Returns the merged findings plus counters explaining what was dropped (useful for tuning).
+
+    `suppressed`: categories the team keeps 👎-ing (from the Learner). Dropped unless high or critical.
+    """
     by_path = {f.path: f for f in files}
     stats = {"received": len(raw), "low_confidence": 0, "unknown_file": 0, "moved_to_file_level": 0, "duplicates": 0}
+    if suppressed:
+        stats["suppressed"] = 0
     merged: list[Finding] = []
 
     for agent, af in raw:
         if af.confidence < MIN_CONFIDENCE:
             stats["low_confidence"] += 1
+            continue
+        if _slug(af.category) in suppressed and SEVERITY_RANK[af.severity] > SEVERITY_RANK["high"]:
+            stats["suppressed"] += 1
             continue
         path = _resolve_path(af.file, by_path)
         if path is None:

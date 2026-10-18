@@ -10,8 +10,8 @@ Prometheus + Grafana · Langfuse.
 - **Plan & architecture:** [docs/PLAN.md](docs/PLAN.md)
 - **How each phase works:** [docs/LEARNING-NOTES.md](docs/LEARNING-NOTES.md)
 - **GitHub App setup:** [docs/SETUP-GITHUB-APP.md](docs/SETUP-GITHUB-APP.md)
-- **Status:** Phase 4 done: every PR gets an "AI Review" check and a GitHub review with inline comments and
-  one-click suggestions (about $0.0025 per review). Next: Phase 5 (Learner).
+- **Status:** Phase 5 done: reviews now use what the Learner knows about each repo (recurring issues, verified
+  conventions, 👍/👎 feedback). Next: Phase 6 (Prometheus, Grafana, Langfuse).
 
 ## Quick start
 
@@ -27,6 +27,8 @@ Needs Docker Desktop and [uv](https://docs.astral.sh/uv/).
 ./setup.sh show owner/repo#12       # findings of a PR's latest review
 ./setup.sh rereview owner/repo#12   # review it again
 ./setup.sh repost owner/repo#12     # post the saved review again (no LLM cost; never double-posts)
+./setup.sh knowledge owner/repo     # what the Learner knows about a repo
+./setup.sh learn owner/repo#12      # run the Learner on a PR now
 ./setup.sh logs orchestrator-worker
 ./setup.sh test      # run tests
 ./setup.sh psql      # poke at the database

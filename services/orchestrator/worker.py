@@ -9,19 +9,20 @@ from datetime import UTC, datetime
 from typing import Any
 
 import httpx
-from langchain_openai import ChatOpenAI
 from redis.asyncio import Redis
 from sqlalchemy import delete, func, select, update
 from sqlalchemy.orm import selectinload
 
 from common import aio
 from common.celery_app import TASK_POST_REVIEW, TASK_REVIEW_PR, celery_app
-from common.config import Settings, get_settings
+from common.config import get_settings
 from common.db.models import Finding as FindingRow
 from common.db.models import PullRequest, ReviewRun, RunStatus
 from common.db.session import session_scope
 from common.github import GitHubAppAuth, GitHubClient, GitHubError, GitHubRetryable
+from common.llm import make_llm
 from common.logging import setup_logging
+from common.patterns import load_knowledge
 from services.orchestrator import report
 from services.orchestrator.fetch import Superseded, fetch_diff
 from services.orchestrator.graph.cost import cost_usd
@@ -33,18 +34,6 @@ CHECK_NAME = "AI Review"
 
 # A redelivered task (worker crash with acks_late) may find its run already in progress; anything else is done.
 RUNNABLE = (RunStatus.queued, RunStatus.fetching, RunStatus.reviewing)
-
-
-def make_llm(settings: Settings) -> ChatOpenAI:
-    if not settings.openai_api_key:
-        raise RuntimeError("OPENAI_API_KEY is not set")
-    return ChatOpenAI(
-        model=settings.openai_model,
-        api_key=settings.openai_api_key,
-        temperature=0.1,
-        timeout=90,
-        max_retries=2,
-    )
 
 
 async def _set(run_id: uuid.UUID, **values: Any) -> None:
@@ -166,8 +155,24 @@ async def review(run_id: str) -> str:
                     return "skipped"
 
                 await _set(rid, status=RunStatus.reviewing, files_reviewed=len(sel.files))
-                ctx = ReviewContext(repo=repo.full_name, number=pr.number, title=pr.title, files=sel.files)
-                # Phase 5: ctx.conventions / ctx.frequent_issues come from the Learner's repo_patterns.
+                async with session_scope() as session:
+                    knowledge = await load_knowledge(session, repo.id)
+                ctx = ReviewContext(
+                    repo=repo.full_name,
+                    number=pr.number,
+                    title=pr.title,
+                    files=sel.files,
+                    conventions=knowledge.conventions,
+                    frequent_issues=knowledge.frequent_issues,
+                    suppressed_categories=knowledge.suppressed_categories,
+                )
+                log.info(
+                    "%s: using %d conventions, %d recurring issues, %d suppressed categories",
+                    label,
+                    len(knowledge.conventions),
+                    len(knowledge.frequent_issues),
+                    len(knowledge.suppressed_categories),
+                )
                 graph = build_review_graph(make_llm(settings))
                 state = await graph.ainvoke({"ctx": ctx}, config={"run_name": f"review {label}"})
 

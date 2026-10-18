@@ -55,7 +55,8 @@ def build_review_graph(llm: Any):
 
 
 def _merge_node(state: ReviewState) -> dict:
-    findings, stats = merge_findings(state.get("raw_findings", []), state["ctx"].files)
+    ctx = state["ctx"]
+    findings, stats = merge_findings(state.get("raw_findings", []), ctx.files, set(ctx.suppressed_categories))
     return {"findings": findings, "merge_stats": stats}
 
 

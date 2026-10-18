@@ -16,9 +16,10 @@ from sqlalchemy.orm import selectinload
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from common.celery_app import TASK_POST_REVIEW, TASK_REVIEW_PR, celery_app  # noqa: E402
-from common.db.models import Finding, PullRequest, Repository, ReviewRun, RunStatus  # noqa: E402
+from common.celery_app import TASK_LEARN_FROM_PR, TASK_POST_REVIEW, TASK_REVIEW_PR, celery_app  # noqa: E402
+from common.db.models import Finding, PullRequest, RepoPattern, Repository, ReviewRun, RunStatus  # noqa: E402
 from common.db.session import dispose_engine, session_scope  # noqa: E402
+from common.patterns import rank, score  # noqa: E402
 
 ICON = {"critical": "🔴", "high": "🟠", "medium": "🟡", "low": "🔵", "info": "⚪"}
 
@@ -122,6 +123,26 @@ async def repost(ref: str) -> None:
     print(f"posting run {run_id} again — follow with: ./setup.sh logs reviewer-worker")
 
 
+async def learn(ref: str) -> None:
+    async with session_scope() as s:
+        r = await _find_run(s, ref)
+        pr_id = str(r.pr_id)
+    celery_app.send_task(TASK_LEARN_FROM_PR, kwargs={"pr_id": pr_id, "force": True})
+    print(f"learner queued for PR {pr_id} — follow with: ./setup.sh logs learner-worker")
+
+
+async def knowledge(repo: str) -> None:
+    async with session_scope() as s:
+        patterns = (await s.scalars(select(RepoPattern).join(Repository).where(Repository.full_name == repo))).all()
+    for p in sorted(patterns, key=lambda p: (p.kind.value, -score(p))):
+        print(f"{p.kind.value:<15} freq={p.frequency:<3} weight={p.weight:.2f} score={score(p):5.2f}  {p.pattern}")
+    k = rank(list(patterns))
+    print(
+        f"\nUsed in prompts: {len(k.conventions)} conventions, {len(k.frequent_issues)} recurring issues;"
+        f" suppressed: {k.suppressed_categories or 'none'}"
+    )
+
+
 async def main(argv: list[str]) -> None:
     try:
         match argv:
@@ -133,6 +154,10 @@ async def main(argv: list[str]) -> None:
                 await rereview(ref)
             case ["repost", ref]:
                 await repost(ref)
+            case ["learn", ref]:
+                await learn(ref)
+            case ["knowledge", repo]:
+                await knowledge(repo)
             case _:
                 print(__doc__)
                 sys.exit(1)

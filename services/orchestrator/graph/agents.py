@@ -48,7 +48,13 @@ def make_agent_node(agent: str, llm: Any):
                         system,
                         HumanMessage(
                             prompts.user_prompt(
-                                ctx.repo, ctx.number, ctx.title, chunk, ctx.conventions, ctx.frequent_issues
+                                ctx.repo,
+                                ctx.number,
+                                ctx.title,
+                                chunk,
+                                ctx.conventions,
+                                ctx.frequent_issues,
+                                ctx.suppressed_categories,
                             )
                         ),
                     ],

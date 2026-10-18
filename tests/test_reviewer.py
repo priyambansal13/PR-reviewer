@@ -239,6 +239,7 @@ async def test_posts_one_review_and_links_comments(github_app, saved_run):
 
     assert await post(saved_run.run_id) == "already posted"
     assert created.call_count == 1
+    assert MARKER.format(f"{saved_run.run_id}:0") in sent["body"]
 
 
 @respx.mock
@@ -247,7 +248,9 @@ async def test_marker_on_github_prevents_double_post(github_app, saved_run):
         respx,
         saved_run.repo,
         saved_run.inst,
-        reviews=[{"id": 900, "user": {"id": 42}, "state": "COMMENTED", "body": "x " + MARKER.format(saved_run.run_id)}],
+        reviews=[
+            {"id": 900, "user": {"id": 42}, "state": "COMMENTED", "body": "x " + MARKER.format(f"{saved_run.run_id}:0")}
+        ],
     )
     assert await post(saved_run.run_id) == "already posted"
     assert created.call_count == 0

@@ -11,10 +11,10 @@ from pathlib import Path
 
 from common.config import get_settings
 from common.diff import parse_diff, select_reviewable
+from common.llm import make_llm
 from services.orchestrator import report
 from services.orchestrator.graph.graph import build_review_graph
 from services.orchestrator.graph.schemas import ReviewContext
-from services.orchestrator.worker import make_llm
 
 
 async def main() -> None:

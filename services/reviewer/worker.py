@@ -5,7 +5,6 @@ Run: uv run celery -A services.reviewer.worker worker -Q post -n reviewer@%h --l
 
 import logging
 import uuid
-from datetime import UTC, datetime
 from typing import Any
 
 import httpx
@@ -56,6 +55,9 @@ async def post(run_id: str) -> str:
         head_sha, base_sha = run.head_sha, run.base_sha
         summary, verdict = run.summary or "", run.verdict or "comment"
         tokens, cost = run.tokens_in + run.tokens_out, float(run.cost_usd)
+        # Identifies this *result* of the run: `repost` keeps it (never double-posts), `rereview` saves new
+        # findings with a new finished_at, so its review is posted fresh.
+        review_key = f"{run_id}:{int(run.finished_at.timestamp()) if run.finished_at else 0}"
         label = f"{repo.full_name}#{pr.number}@{head_sha[:7]}"
 
     await _set(rid, status=RunStatus.posting)
@@ -73,11 +75,11 @@ async def post(run_id: str) -> str:
 
             files = await _files(gh, repo.full_name, pr.number, base_sha, head_sha)
             footer = f"<sub>{settings.openai_model} · {tokens:,} tokens · ${cost:.4f} · run `{run_id[:8]}`</sub>"
-            payload = build_review(run_id, findings, files, summary, verdict, settings.max_inline_comments, footer)
+            payload = build_review(review_key, findings, files, summary, verdict, settings.max_inline_comments, footer)
 
             # Idempotency: a previous attempt may have posted and then crashed before saving the id.
             # The payload is deterministic, so we can still link its comments to our findings.
-            marker = MARKER.format(run_id)
+            marker = MARKER.format(review_key)
             reviews = await gh.list_reviews(repo.full_name, pr.number)
             if existing := next((r for r in reviews if marker in (r.get("body") or "")), None):
                 log.info("%s: review %s already on GitHub — recording it", label, existing["id"])
@@ -91,7 +93,7 @@ async def post(run_id: str) -> str:
                 head_sha,
                 payload,
                 label,
-                rebuild_without_inline=lambda: build_review(run_id, findings, files, summary, verdict, 0, footer),
+                rebuild_without_inline=lambda: build_review(review_key, findings, files, summary, verdict, 0, footer),
             )
 
             await _dismiss_stale(gh, repo.full_name, pr.number, reviews, review, head_sha)
@@ -182,7 +184,7 @@ async def _record(
         await session.execute(
             update(ReviewRun)
             .where(ReviewRun.id == rid)
-            .values(status=RunStatus.posted, github_review_id=review_id, error=None, finished_at=datetime.now(UTC))
+            .values(status=RunStatus.posted, github_review_id=review_id, error=None)
         )
 
 

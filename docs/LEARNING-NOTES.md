@@ -272,3 +272,58 @@ review id, the retry finds it, records it, and links the comments instead of pos
 **Known limit:** a suggestion can be locally right but incomplete. For example, `os.getenv(...)` is suggested
 without adding `import os`. A suggestion block can only replace the commented line. The check-run details and the
 comment text explain the full fix.
+
+## Phase 5 — The Learner (feedback loop)
+
+```mermaid
+flowchart LR
+    M[PR merged] -->|learn_from_pr| L[Learner worker]
+    L --> F[👍/👎 on the bot's comments<br/>humans only]
+    L --> C[Conventions from the merged diff<br/>propose → evidence → fact-check]
+    L --> R[Recurring issues<br/>recomputed from all findings]
+    F & C & R --> P[(repo_patterns)]
+    P -->|load_knowledge: frequency × weight × decay| O[Next review's prompts + merge]
+```
+
+**Three kinds of knowledge** (`services/learner/learn.py`, `common/patterns.py`):
+
+| Kind | Source | Used how |
+|---|---|---|
+| Recurring issue | every finding in the repo, grouped by category, counted in **distinct PRs** | "Problems that keep recurring here (check for them)", once seen in ≥ 2 PRs |
+| Feedback weight | 👍/👎 on the bot's inline comments (bot reactions ignored) | weight = (1+👍)/(1+👍+👎); < 0.4 → category **suppressed**: agents are told, and merge drops it unless high/critical |
+| Convention | an LLM reading the merged diff | "This repository's conventions… prefer these", once seen in ≥ 2 merged PRs |
+
+Ranking = frequency × weight × 0.5^(age/90 days), so habits the team dropped fade out.
+
+**Recompute, don't increment.** Recurring issues and their weights are rebuilt from the `findings` table every
+time, not `+= 1`'d. Running the Learner twice, or on an old PR, can't double-count; the database is the single
+source of truth. (Conventions do increment, because the LLM output isn't reproducible.)
+
+**Learning the wrong thing is the real risk.** On PR #1 (merged, with SQL injection and a hard-coded secret in it), the
+first version learned 8 "conventions". Some were false ("all functions have a docstring": none do). Some were
+harmful ("parameters are not annotated with type hints" would teach the reviewer to stop asking for them).
+Defences, in order:
+
+| Layer | What it stops | PR #1 result |
+|---|---|---|
+| Show the extractor the review's findings: "never learn from flagged code" | "SQL is built with f-strings" | never proposed ✔ |
+| Prompt: positive practices only, nothing about absence, no formatter rules | "no logging", "no type hints" | gone ✔ |
+| **Evidence:** ≥ 2 cited `path:line` that are real added lines | invented citations | weak on new files: every line is "added" |
+| **Fact-check:** a second LLM call marks each claim TRUE/FALSE against the diff | "all functions have a docstring" → *"fetch_avatar lacks a docstring"* | 3 of 5 rejected ✔ |
+| **Must recur in ≥ 2 merged PRs** before it steers a review | one-off hallucinations that survived | 2 weak ones stored, not used ✔ |
+
+General lesson: **checking a claim is easier than generating one**, so a cheap verifier pass catches most of a
+generator's mistakes. For what still slips through, statistics (does it recur?) beat trusting a single model call.
+
+**Testing note — a flaky test.** `test_learn_from_merged_pr` failed about 1 run in 3. The fixture created both PRs'
+findings in one transaction, and Postgres `now()` is fixed per transaction, so "the most recent example" was a tie
+broken at random. Fixed with explicit timestamps in the fixture *and* a deterministic tiebreak in the query
+(`ORDER BY created_at, run.created_at, id`). Code shouldn't depend on tie order even when production rarely ties.
+
+**Re-review vs. repost.** The hidden review marker is `run_id:finished_at`. `repost` keeps `finished_at` (same marker →
+never double-posts); `rereview` saves new findings with a new `finished_at` (new marker → a fresh review is posted).
+
+```bash
+./setup.sh knowledge priyambansal13/PR-reviewer     # what it knows, with scores
+./setup.sh learn priyambansal13/PR-reviewer#3       # run the Learner now (unmerged PR: feedback only)
+```
