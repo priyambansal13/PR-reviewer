@@ -30,7 +30,7 @@ ensure_env() {
     echo "Created .env from .env.example — fill in secrets as the phases need them."
   fi
   # Generate the secrets we own (the webhook secret is pasted into the GitHub App settings in Phase 2)
-  for key in INTERNAL_TOKEN GITHUB_WEBHOOK_SECRET; do
+  for key in INTERNAL_TOKEN GITHUB_WEBHOOK_SECRET ADMIN_API_TOKEN; do
     grep -qE "^${key}=" .env || echo "${key}=" >> .env
     if grep -qE "^${key}=(change-me)?$" .env; then
       sed -i.bak "s|^${key}=.*|${key}=$(openssl rand -hex 32)|" .env && rm -f .env.bak
@@ -87,7 +87,7 @@ cmd_tunnel() {
   echo $! >.logs/tunnel.pid
   local url=""
   for _ in $(seq 1 45); do
-    url=$(grep -oE 'https://[a-z0-9-]+\.trycloudflare\.com' .logs/tunnel.log | head -1 || true)
+    url=$(grep -aoE 'https://[a-z0-9-]+\.trycloudflare\.com' .logs/tunnel.log | head -1 || true)
     [[ -n "$url" ]] && break
     sleep 1
   done

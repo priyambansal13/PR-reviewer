@@ -9,6 +9,9 @@ x-app: &app
     DATABASE_URL: postgresql+asyncpg://reviewer:reviewer@postgres:5432/reviewer
     REDIS_URL: redis://redis:6379/0
     WEBHOOK_SERVICE_URL: http://webhook:8001
+    ORCHESTRATOR_SERVICE_URL: http://orchestrator:8002
+    REVIEWER_SERVICE_URL: http://reviewer:8003
+    LEARNER_SERVICE_URL: http://learner:8004
   volumes:
     - ./secrets:/app/secrets:ro
   depends_on:
@@ -82,6 +85,33 @@ services:
     healthcheck:
       <<: *http-health
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8001/healthz')"]
+
+  # Orchestrator service API (internal; reached through the gateway's /api/orchestrator/...)
+  orchestrator:
+    <<: *app
+    container_name: prr-orchestrator-api
+    command: ["uvicorn", "services.orchestrator.app:app", "--host", "0.0.0.0", "--port", "8002"]
+    healthcheck:
+      <<: *http-health
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8002/healthz')"]
+
+  # Reviewer service API (internal; reached through the gateway's /api/reviewer/...)
+  reviewer:
+    <<: *app
+    container_name: prr-reviewer-api
+    command: ["uvicorn", "services.reviewer.app:app", "--host", "0.0.0.0", "--port", "8003"]
+    healthcheck:
+      <<: *http-health
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8003/healthz')"]
+
+  # Learner service API (internal; reached through the gateway's /api/learner/...)
+  learner:
+    <<: *app
+    container_name: prr-learner-api
+    command: ["uvicorn", "services.learner.app:app", "--host", "0.0.0.0", "--port", "8004"]
+    healthcheck:
+      <<: *http-health
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8004/healthz')"]
 
   orchestrator-worker:
     <<: *app

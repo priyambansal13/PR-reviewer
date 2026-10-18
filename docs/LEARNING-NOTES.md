@@ -419,3 +419,28 @@ zero while the queue grows. Scale on the thing that measures the backlog (Redis 
 
 **Migrate before rollout, compatibly.** During a rolling update, old and new pods run side by side on the *already
 migrated* schema. Every migration must therefore work with the previous release's code (expand/contract).
+
+
+## Addendum — five FastAPI services
+
+The course spec asks for five FastAPI microservices. Orchestrator, Reviewer and Learner were Celery-only at first.
+Each now has a FastAPI app as well: **API for control and inspection, worker for the slow work**, from the same
+code in separate containers.
+
+- **One piece of logic, two front ends.** Reset/re-run/re-post/learn live in `services/*/runs.py` and
+  `services/learner/knowledge.py`. The FastAPI routes and `./setup.sh rereview|repost|learn|knowledge` call the same
+  functions, so they can't drift apart.
+- **Re-running a busy run is refused (409).** Resetting a run that a worker is processing would race it. The API
+  and the CLI both check the status first.
+- **Auth in two layers.** The gateway's `/api/<service>/…` requires `Authorization: Bearer $ADMIN_API_TOKEN` and is
+  off when no token is set. The internal services accept only calls carrying the gateway's internal token. Health
+  and metrics endpoints stay open for probes and Prometheus; that's why the token check sits on a router, not on
+  the whole app (an app-wide dependency would have made Kubernetes probes fail with 403).
+- **Verified live:** listing PR #3's reviews (with Langfuse link), findings, posting status, the Learner's
+  knowledge, and an idempotent re-post. No/wrong token → 401, even through the public tunnel.
+
+**Bug found while verifying: a corrupted tunnel URL.** Cloudflare quick tunnels are temporary, and this one expired
+after a few hours ("Tunnel not found"). Restarting it produced a URL that GitHub rejected with 422. The tunnel log
+had picked up some binary bytes, so `grep` printed *"Binary file … matches"* instead of the URL, and that text was
+saved and sent to GitHub as the webhook URL. Fix: `grep -a`. Checked by asking GitHub to redeliver a webhook → HTTP
+200. For anything long-lived, use a named Cloudflare tunnel (stable hostname) or the real ALB.

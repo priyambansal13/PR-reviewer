@@ -6,6 +6,9 @@ metadata:
   name: pr-reviewer-config
 data:
   WEBHOOK_SERVICE_URL: http://webhook:8001
+  ORCHESTRATOR_SERVICE_URL: http://orchestrator:8002
+  REVIEWER_SERVICE_URL: http://reviewer:8003
+  LEARNER_SERVICE_URL: http://learner:8004
   GITHUB_PRIVATE_KEY_PATH: /app/secrets/github-app.pem
   GITHUB_API_URL: https://api.github.com
   OPENAI_MODEL: gpt-4o-mini

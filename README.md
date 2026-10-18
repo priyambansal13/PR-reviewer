@@ -13,8 +13,8 @@ Prometheus + Grafana · Langfuse.
 - **How each phase works:** [docs/LEARNING-NOTES.md](docs/LEARNING-NOTES.md)
 - **GitHub App setup:** [docs/SETUP-GITHUB-APP.md](docs/SETUP-GITHUB-APP.md)
 - **Deploying to AWS (EKS):** [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md)
-- **Status:** all 7 phases done: runs locally end to end on real PRs; CI on every push; EKS manifests and deploy
-  workflow ready (not deployed).
+- **Status:** all 7 phases done, with five FastAPI services: runs locally end to end on real PRs; CI on every push;
+  EKS manifests and deploy workflow ready (not deployed).
 
 ## Quick start
 
@@ -42,12 +42,32 @@ Needs Docker Desktop and [uv](https://docs.astral.sh/uv/).
 |---|---|
 | Gateway (public entry) | `http://localhost:8000` — `POST /webhook/github` |
 | Webhook service | internal only (`webhook:8001` on the compose network) |
+| Orchestrator / Reviewer / Learner APIs | internal (`:8002` / `:8003` / `:8004`); reach them via the gateway's `/api/…` with `ADMIN_API_TOKEN` |
 | Workers | `orchestrator-worker` (queue `review`), `reviewer-worker` (queue `post`), `learner-worker` (queue `learn`) |
 | Grafana | `http://localhost:3030` — dashboard **PR Reviewer** (anonymous view; admin/admin to edit) |
 | Prometheus | `http://localhost:9090` |
 | Langfuse | your Langfuse Cloud project (set `LANGFUSE_PUBLIC_KEY` / `LANGFUSE_SECRET_KEY`) |
 | Postgres | `localhost:5435` (user/pass/db `reviewer`) |
 | Redis | `localhost:6380` |
+
+## The five services
+
+Each is a FastAPI app; the three that do background work also have a Celery worker (same code, separate container).
+
+| Service | FastAPI (API) | Celery worker (work) |
+|---|---|---|
+| **gateway** (public) | `POST /webhook/github` (HMAC check); `/api/<service>/…` admin proxy (bearer token) | — |
+| **webhook** | `POST /events`: parse, de-duplicate, store, enqueue | — |
+| **orchestrator** | `GET /reviews`, `GET /reviews/{id}`, `POST /reviews/{id}/rerun` | fetch diff → 4 parallel agents → save |
+| **reviewer** | `GET /reviews/{id}/posting`, `POST /reviews/{id}/post` | post the GitHub review |
+| **learner** | `GET /repos/{owner}/{repo}/knowledge`, `POST /repos/{owner}/{repo}/pulls/{n}/learn` | learn from merged PRs |
+
+```bash
+T=$(grep ^ADMIN_API_TOKEN= .env | cut -d= -f2)
+curl -H "Authorization: Bearer $T" "localhost:8000/api/orchestrator/reviews?repo=priyambansal13/PR-reviewer"
+curl -H "Authorization: Bearer $T" localhost:8000/api/learner/repos/priyambansal13/PR-reviewer/knowledge
+curl -H "Authorization: Bearer $T" -X POST localhost:8000/api/orchestrator/reviews/<run-id>/rerun
+```
 
 ## Layout
 

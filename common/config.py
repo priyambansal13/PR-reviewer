@@ -22,7 +22,12 @@ class Settings(BaseSettings):
 
     # Internal routing. The gateway sends INTERNAL_TOKEN so internal services can tell its calls apart.
     webhook_service_url: str = "http://localhost:8001"
+    orchestrator_service_url: str = "http://localhost:8002"
+    reviewer_service_url: str = "http://localhost:8003"
+    learner_service_url: str = "http://localhost:8004"
     internal_token: str = ""
+    # Bearer token for the gateway's /api/* (admin API). Empty = admin API disabled.
+    admin_api_token: str = ""
 
     # LLM (Phase 3)
     openai_api_key: str = ""

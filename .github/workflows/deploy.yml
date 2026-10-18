@@ -75,13 +75,13 @@ jobs:
       - name: Roll out
         run: |
           kubectl apply -k deploy/k8s
-          for d in gateway webhook orchestrator-worker reviewer-worker learner-worker; do
+          for d in gateway webhook orchestrator reviewer learner orchestrator-worker reviewer-worker learner-worker; do
             kubectl -n pr-reviewer rollout status deployment/$d --timeout=300s
           done
 
       - name: Roll back on failure
         if: failure()
         run: |
-          for d in gateway webhook orchestrator-worker reviewer-worker learner-worker; do
+          for d in gateway webhook orchestrator reviewer learner orchestrator-worker reviewer-worker learner-worker; do
             kubectl -n pr-reviewer rollout undo deployment/$d || true
           done

@@ -3,6 +3,7 @@
 Run: uv run uvicorn services.gateway.app:app --port 8000
 """
 
+import secrets
 from contextlib import asynccontextmanager
 
 import httpx
@@ -26,8 +27,10 @@ async def lifespan(app: FastAPI):
     if not settings.github_webhook_secret:
         log.warning("GITHUB_WEBHOOK_SECRET is empty — every webhook will be rejected")
     app.state.http = httpx.AsyncClient(base_url=settings.webhook_service_url, timeout=10)
+    app.state.internal = httpx.AsyncClient(timeout=30)  # admin API calls to the other internal services
     yield
     await app.state.http.aclose()
+    await app.state.internal.aclose()
 
 
 app = FastAPI(title="PR Reviewer · Gateway", lifespan=lifespan)
@@ -87,3 +90,37 @@ async def github_webhook(request: Request) -> Response:
     log.info("delivery %s (%s) -> %s", delivery, event, upstream.status_code)
     WEBHOOKS.labels(event, "forwarded" if upstream.status_code < 400 else f"upstream_{upstream.status_code}").inc()
     return Response(upstream.content, upstream.status_code, media_type="application/json")
+
+
+# --- admin API: /api/<service>/<path> -> that internal service ------------------------------------------------------
+
+INTERNAL_SERVICES = {
+    "orchestrator": lambda s: s.orchestrator_service_url,
+    "reviewer": lambda s: s.reviewer_service_url,
+    "learner": lambda s: s.learner_service_url,
+}
+
+
+@app.api_route("/api/{service}/{path:path}", methods=["GET", "POST"], include_in_schema=False)
+async def admin_api(service: str, path: str, request: Request) -> Response:
+    """Authenticated pass-through to the internal services' APIs (e.g. GET /api/orchestrator/reviews)."""
+    settings = get_settings()
+    if not settings.admin_api_token:
+        raise HTTPException(503, "admin API disabled (ADMIN_API_TOKEN not set)")
+    auth = request.headers.get("authorization", "")
+    if not secrets.compare_digest(auth, f"Bearer {settings.admin_api_token}"):
+        raise HTTPException(401, "missing or invalid bearer token")
+    if service not in INTERNAL_SERVICES:
+        raise HTTPException(404, f"unknown service {service!r}")
+
+    url = f"{INTERNAL_SERVICES[service](settings).rstrip('/')}/{path}"
+    headers = {"content-type": request.headers.get("content-type", "application/json")}
+    if settings.internal_token:
+        headers["x-internal-token"] = settings.internal_token
+    try:
+        upstream = await request.app.state.internal.request(
+            request.method, url, params=request.query_params, content=await request.body(), headers=headers
+        )
+    except httpx.HTTPError as exc:
+        raise HTTPException(502, f"{service} service unavailable") from exc
+    return Response(upstream.content, upstream.status_code, media_type=upstream.headers.get("content-type"))

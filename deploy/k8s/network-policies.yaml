@@ -36,6 +36,22 @@ spec:
         - podSelector:
             matchLabels: { app.kubernetes.io/name: gateway }
 ---
+# service APIs: only from the gateway (its authenticated /api/... proxy)
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: apis-from-gateway
+spec:
+  podSelector:
+    matchExpressions:
+      - { key: app.kubernetes.io/name, operator: In, values: [orchestrator, reviewer, learner] }
+  policyTypes: [Ingress]
+  ingress:
+    - ports: [{ port: 8002 }, { port: 8003 }, { port: 8004 }]
+      from:
+        - podSelector:
+            matchLabels: { app.kubernetes.io/name: gateway }
+---
 # metrics: only from Prometheus (namespace "monitoring", e.g. kube-prometheus-stack)
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
@@ -45,7 +61,7 @@ spec:
   podSelector: {}
   policyTypes: [Ingress]
   ingress:
-    - ports: [{ port: 8000 }, { port: 8001 }, { port: 9100 }]
+    - ports: [{ port: 8000 }, { port: 8001 }, { port: 8002 }, { port: 8003 }, { port: 8004 }, { port: 9100 }]
       from:
         - namespaceSelector:
             matchLabels: { kubernetes.io/metadata.name: monitoring }

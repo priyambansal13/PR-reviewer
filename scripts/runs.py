@@ -11,15 +11,17 @@ import sys
 import uuid
 from pathlib import Path
 
-from sqlalchemy import delete, select, update
+from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from common.celery_app import TASK_LEARN_FROM_PR, TASK_POST_REVIEW, TASK_REVIEW_PR, celery_app  # noqa: E402
-from common.db.models import Finding, PullRequest, RepoPattern, Repository, ReviewRun, RunStatus  # noqa: E402
+from common.db.models import PullRequest, Repository, ReviewRun  # noqa: E402
 from common.db.session import dispose_engine, session_scope  # noqa: E402
-from common.patterns import rank, score  # noqa: E402
+from services.learner.knowledge import repo_knowledge  # noqa: E402
+from services.orchestrator.runs import Busy, reset_for_rereview  # noqa: E402
+from services.reviewer.runs import NotPostable, reset_for_repost  # noqa: E402
 
 ICON = {"critical": "🔴", "high": "🟠", "medium": "🟡", "low": "🔵", "info": "⚪"}
 
@@ -86,24 +88,10 @@ async def show(ref: str) -> None:
 async def rereview(ref: str) -> None:
     async with session_scope() as s:
         r = await _find_run(s, ref)
-        await s.execute(delete(Finding).where(Finding.run_id == r.id))
-        await s.execute(
-            update(ReviewRun)
-            .where(ReviewRun.id == r.id)
-            .values(
-                status=RunStatus.queued,
-                error=None,
-                summary=None,
-                verdict=None,
-                tokens_in=0,
-                tokens_out=0,
-                cost_usd=0,
-                started_at=None,
-                finished_at=None,
-                github_check_run_id=None,  # a fresh check run on the PR
-                github_review_id=None,
-            )
-        )
+        try:
+            await reset_for_rereview(s, r.id)
+        except Busy as exc:
+            sys.exit(f"run is {exc} — wait for it to finish")
         run_id = str(r.id)
     celery_app.send_task(TASK_REVIEW_PR, kwargs={"run_id": run_id})
     print(f"queued run {run_id} again — follow with: ./setup.sh logs orchestrator-worker")
@@ -112,12 +100,10 @@ async def rereview(ref: str) -> None:
 async def repost(ref: str) -> None:
     async with session_scope() as s:
         r = await _find_run(s, ref)
-        await s.execute(update(Finding).where(Finding.run_id == r.id).values(posted=False, github_comment_id=None))
-        await s.execute(
-            update(ReviewRun)
-            .where(ReviewRun.id == r.id)
-            .values(status=RunStatus.saved, github_review_id=None, error=None)
-        )
+        try:
+            await reset_for_repost(s, r.id)
+        except NotPostable as exc:
+            sys.exit(f"can't post: {exc}")
         run_id = str(r.id)
     celery_app.send_task(TASK_POST_REVIEW, kwargs={"run_id": run_id})
     print(f"posting run {run_id} again — follow with: ./setup.sh logs reviewer-worker")
@@ -133,13 +119,17 @@ async def learn(ref: str) -> None:
 
 async def knowledge(repo: str) -> None:
     async with session_scope() as s:
-        patterns = (await s.scalars(select(RepoPattern).join(Repository).where(Repository.full_name == repo))).all()
-    for p in sorted(patterns, key=lambda p: (p.kind.value, -score(p))):
-        print(f"{p.kind.value:<15} freq={p.frequency:<3} weight={p.weight:.2f} score={score(p):5.2f}  {p.pattern}")
-    k = rank(list(patterns))
+        k = await repo_knowledge(s, repo)
+    if k is None:
+        sys.exit(f"unknown repository {repo}")
+    for p in k["patterns"]:
+        print(
+            f"{p['kind']:<15} freq={p['frequency']:<3} weight={p['weight']:.2f} score={p['score']:5.2f}  {p['pattern']}"
+        )
+    used = k["used_in_prompts"]
     print(
-        f"\nUsed in prompts: {len(k.conventions)} conventions, {len(k.frequent_issues)} recurring issues;"
-        f" suppressed: {k.suppressed_categories or 'none'}"
+        f"\nUsed in prompts: {len(used['conventions'])} conventions, {len(used['recurring_issues'])} recurring issues;"
+        f" suppressed: {used['suppressed_categories'] or 'none'}"
     )
 
 

@@ -5,57 +5,23 @@ Run: uv run uvicorn services.webhook.app:app --port 8001
 
 import asyncio
 import json
-import secrets
-from collections.abc import AsyncIterator
-from typing import Annotated, Any, Protocol
+from typing import Annotated
 
-from fastapi import Depends, FastAPI, Header, HTTPException, Request
-from prometheus_fastapi_instrumentator import Instrumentator
+from fastapi import Depends, Header, HTTPException, Request
 from sqlalchemy import delete
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+from sqlalchemy.ext.asyncio import AsyncSession
 
-from common.celery_app import celery_app
-from common.config import get_settings
+from common.api import Enqueuer, check_internal_token, get_enqueuer, get_session, make_app
 from common.db.models import ReviewRun, WebhookDelivery
-from common.db.session import get_engine
 from common.logging import setup_logging
 from common.metrics import EVENTS
 from services.webhook.handlers import InvalidPayload, process_event
 
 log = setup_logging("webhook")
 
-app = FastAPI(title="PR Reviewer · Webhook")
-Instrumentator(excluded_handlers=["/metrics", "/healthz"]).instrument(app).expose(app, include_in_schema=False)
+app = make_app("Webhook")  # /events checks the internal token itself (below)
 
-
-class Enqueuer(Protocol):
-    def send(self, task_name: str, kwargs: dict[str, Any]) -> None: ...
-
-
-class CeleryEnqueuer:
-    def send(self, task_name: str, kwargs: dict[str, Any]) -> None:
-        # send_task by *name*: this service never imports worker code
-        celery_app.send_task(task_name, kwargs=kwargs)
-
-
-async def get_session() -> AsyncIterator[AsyncSession]:
-    async with async_sessionmaker(get_engine(), expire_on_commit=False)() as session:
-        yield session
-
-
-def get_enqueuer() -> Enqueuer:
-    return CeleryEnqueuer()
-
-
-def check_internal_token(x_internal_token: Annotated[str | None, Header()] = None) -> None:
-    expected = get_settings().internal_token
-    if expected and not secrets.compare_digest(x_internal_token or "", expected):
-        raise HTTPException(403, "internal endpoint")
-
-
-@app.get("/healthz")
-async def healthz() -> dict:
-    return {"ok": True}
+__all__ = ["app", "get_enqueuer", "get_session"]  # tests override these dependencies
 
 
 @app.post("/events", dependencies=[Depends(check_internal_token)])

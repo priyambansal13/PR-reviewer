@@ -10,6 +10,7 @@ resources:
   - configmap.yaml
   - gateway.yaml
   - webhook.yaml
+  - apis.yaml
   - workers.yaml
   - ingress.yaml
   - network-policies.yaml

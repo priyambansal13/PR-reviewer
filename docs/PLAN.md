@@ -67,9 +67,9 @@ flowchart TD
 |---|---|---|
 | **gateway** | FastAPI (public) | The only public entry point. Checks the HMAC signature, rejects fakes, forwards verified events to `webhook`. Also proxies the read API (`/api/reviews…`). |
 | **webhook** | FastAPI (internal) | Parses `pull_request` events, de-duplicates by `(repo, PR, head_sha)` and `X-GitHub-Delivery`, stores metadata, enqueues Celery tasks. |
-| **orchestrator** | Celery worker (+ small FastAPI for health/metrics) | Fetches the diff, loads repo patterns, runs the LangGraph review, saves findings, enqueues `post_review`. |
-| **reviewer** | Celery worker (+ FastAPI) | GitHub App JWT → installation token → posts one PR review containing the inline comments and the summary. |
-| **learner** | Celery worker (+ FastAPI) | On merged PRs: mines frequent issues and style conventions into `repo_patterns`. |
+| **orchestrator** | FastAPI (internal) + Celery worker | Worker: fetches the diff, loads repo patterns, runs the LangGraph review, saves findings, enqueues `post_review`. API: list/inspect/re-run reviews. |
+| **reviewer** | FastAPI (internal) + Celery worker | Worker: GitHub App JWT → installation token → posts one PR review with inline comments and summary. API: posting status, re-post. |
+| **learner** | FastAPI (internal) + Celery worker | Worker: on merged PRs, mines recurring issues, conventions and 👍/👎 into `repo_patterns`. API: repo knowledge, learn now. |
 
 All five live in one Python project (one `pyproject.toml`, one lockfile) and share the `common/` package: settings, SQLAlchemy models, the async DB session, the Celery app,
 the GitHub client and metrics helpers. Each service has its own Dockerfile and its own Celery queue (`review`,

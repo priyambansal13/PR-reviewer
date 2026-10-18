@@ -7,6 +7,12 @@ scrape_configs:
     static_configs: [{ targets: ["gateway:8000"] }]
   - job_name: webhook
     static_configs: [{ targets: ["webhook:8001"] }]
+  - job_name: orchestrator-api
+    static_configs: [{ targets: ["orchestrator:8002"] }]
+  - job_name: reviewer-api
+    static_configs: [{ targets: ["reviewer:8003"] }]
+  - job_name: learner-api
+    static_configs: [{ targets: ["learner:8004"] }]
   - job_name: orchestrator
     static_configs: [{ targets: ["orchestrator-worker:9100"] }]
   - job_name: reviewer

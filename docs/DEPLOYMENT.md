@@ -12,6 +12,8 @@ flowchart TD
     subgraph EKS["EKS cluster · namespace pr-reviewer"]
         ALB --> GW["gateway ×2–6<br/>Deployment + HPA + PDB"]
         GW -->|NetworkPolicy: only from gateway| WH["webhook ×2–6"]
+        APIS["orchestrator / reviewer / learner APIs ×1<br/>(admin; only via gateway /api)"]
+        GW -->|NetworkPolicy| APIS
         OW["orchestrator-worker ×2<br/>(KEDA: 1–10 on queue length)"]
         RW["reviewer-worker ×1"]
         LW["learner-worker ×1"]
@@ -36,14 +38,15 @@ flowchart TD
 | Gateway / Webhook services | `gateway.yaml`, `webhook.yaml`: 2 replicas each, rolling updates with `maxUnavailable: 0`, HPA (CPU 70%, up to 6), PodDisruptionBudget, spread across AZs |
 | Redis / ElastiCache | `REDIS_URL` in the Secret (`rediss://`, TLS); replaces the compose `redis` container |
 | PostgreSQL RDS | `DATABASE_URL` in the Secret; replaces the compose `postgres` container |
-| Celery workers (orchestrator, reviewer, learner) | `workers.yaml`: one Deployment per queue, 120 s graceful shutdown for in-flight LLM calls |
+| Orchestrator / Reviewer / Learner services | `apis.yaml` (their FastAPI apps, internal, reached only from the gateway) + `workers.yaml` (their Celery workers: one Deployment per queue, 120 s graceful shutdown for in-flight LLM calls) |
 | Prometheus / Grafana | pod annotations `prometheus.io/*` + NetworkPolicy allowing the `monitoring` namespace (e.g. kube-prometheus-stack). The Grafana dashboard JSON works unchanged |
 | LangFuse | unchanged: Langfuse Cloud, keys in the Secret |
 | GitHub Actions → Docker build → AWS ECR → EKS | `.github/workflows/ci.yml` (every push/PR) and `deploy.yml` (manual) |
 
 ## Security choices
 
-- **Least exposure.** Only the webhook path is on the internet. The webhook service accepts traffic only from
+- **Least exposure.** Only the webhook path is on the internet (the ALB doesn't route the gateway's `/api/…`; use
+  `kubectl port-forward` or an internal ALB for the admin API, which also requires `ADMIN_API_TOKEN`). The webhook service accepts traffic only from
   gateway pods, and `/metrics` only from the `monitoring` namespace. A default-deny NetworkPolicy covers everything
   else.
 - **Hardened pods.** The namespace enforces the Kubernetes **restricted** Pod Security Standard: non-root (uid 1001),
