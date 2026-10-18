@@ -9,8 +9,9 @@ Prometheus + Grafana · Langfuse.
 
 - **Plan & architecture:** [docs/PLAN.md](docs/PLAN.md)
 - **How each phase works:** [docs/LEARNING-NOTES.md](docs/LEARNING-NOTES.md)
-- **Status:** Phase 1 done: signed webhooks → gateway → webhook service → Postgres + Redis → workers (stubs).
-  Next: Phase 2 (GitHub App auth + fetching diffs).
+- **GitHub App setup:** [docs/SETUP-GITHUB-APP.md](docs/SETUP-GITHUB-APP.md)
+- **Status:** Phase 2: GitHub App auth, diff fetching and parsing are built; waiting on a real App to verify.
+  Next: Phase 3 (LangGraph review engine).
 
 ## Quick start
 
@@ -19,6 +20,8 @@ Needs Docker Desktop and [uv](https://docs.astral.sh/uv/).
 ```bash
 ./setup.sh start     # creates .env (+ secrets), installs deps, migrates, builds and starts everything
 ./setup.sh status    # containers and health
+./setup.sh tunnel    # public HTTPS URL for GitHub (updates the App's webhook URL automatically)
+./setup.sh github    # check the GitHub App and its installations
 ./setup.sh event opened   # send a signed fake GitHub PR event to the gateway
 ./setup.sh logs orchestrator-worker
 ./setup.sh test      # run tests
@@ -37,9 +40,9 @@ Needs Docker Desktop and [uv](https://docs.astral.sh/uv/).
 ## Layout
 
 ```
-common/          shared: config, SQLAlchemy models + async session, Celery app & queue names, logging
+common/          shared: config, models + async session, Celery app, GitHub App client, diff parser
 services/        gateway, webhook, orchestrator (worker), learner (worker); reviewer arrives in Phase 4
-scripts/         send_event.py — pretend to be GitHub
+scripts/         send_event.py (pretend to be GitHub), github_app.py (check App, set webhook URL)
 migrations/      Alembic (async)
 tests/           pytest — DB tests run in a rolled-back transaction
 docs/            plan and setup guides

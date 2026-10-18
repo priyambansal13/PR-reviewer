@@ -76,3 +76,67 @@ Try it with the stack running:
 ./setup.sh event opened --bad-signature   # 401
 ./setup.sh logs orchestrator-worker
 ```
+
+## Phase 2 — GitHub App auth and fetching the diff
+
+```mermaid
+sequenceDiagram
+    participant W as Orchestrator worker
+    participant R as Redis
+    participant GH as GitHub API
+
+    W->>R: GET gh:installation-token:{id}
+    alt cached
+        R-->>W: ghs_… (valid for at least 5 more minutes)
+    else missing
+        W->>W: sign JWT {iss: app_id, iat: now-60, exp: now+9m} with private key (RS256)
+        W->>GH: POST /app/installations/{id}/access_tokens  (Bearer JWT)
+        GH-->>W: {token, expires_at: +1h}
+        W->>R: SET token, TTL = expires_at - now - 5 min
+    end
+    W->>GH: GET /repos/{repo}/pulls/{n}   — is head still our SHA?
+    W->>GH: GET /repos/{repo}/compare/{base}...{head}  Accept: application/vnd.github.diff
+    Note over W,GH: 406/422 (diff too big) → GET /pulls/{n}/files (per-file patches)
+    W->>W: parse → hunks → line numbers → choose files
+```
+
+**Two-step App auth** (`common/github/auth.py`). The private key never leaves the machine. It signs a short JWT that
+only proves "I am App 1234567". GitHub swaps that JWT for an **installation token**, scoped to the repos and
+permissions of one installation and valid for 1 hour. Every worker shares the token through Redis. It's thrown away
+5 minutes early, so a slow task never starts a request with an expired token. If GitHub still answers 401 (for example
+the App was reinstalled), the client deletes the cached token and mints a fresh one once.
+
+**Exact commits, not "the PR".** The diff comes from `compare/{base_sha}...{head_sha}`, the commits stored on
+the run. The three dots mean "changes since the merge base", which is what GitHub's *Files changed* tab shows.
+Asking for "the PR's diff" could return a newer commit than the run is about. Before fetching, the worker checks the
+PR's current head. If the author has pushed again, the run is marked `skipped` (*superseded*), because the newer
+commit has its own run. That avoids paying for a review nobody will read.
+
+**Line mapping** (`common/diff.py`). GitHub only accepts an inline comment on a line that is **in the diff**,
+addressed by its line number in the *new* file. The parser records `new_no` for every added (`+`) and context (` `)
+line; removed lines (`-`) have none. `render()` prints those numbers in the margin of the text the agents read:
+
+```
+### app/db.py (modified, +2 -1)
+@@ -10,5 +10,6 @@ def get_user(conn, user_id):
+   10       cur = conn.cursor()
+      -     cur.execute("SELECT * FROM users WHERE id = %s", (user_id,))
+   11 +     query = f"SELECT * FROM users WHERE id = {user_id}"
+   12 +     cur.execute(query)
+```
+
+So when the security agent says "line 11", that's a real, commentable line. Phase 3 still checks every line number
+against `commentable_lines()` before keeping a finding.
+
+**Why the parser counts lines.** Each hunk header (`@@ -10,5 +10,6 @@`) says how many old and new lines follow. The
+parser reads exactly that many. Otherwise a removed SQL comment `-- note` (shown as `--- note`) would look like a new
+file header. If a header claims more lines than exist, the parser stops at the next `@@` rather than misnumbering
+everything after it.
+
+**What gets skipped** (`select_reviewable`): deleted files, binaries, renames with no changes, lockfiles,
+generated/minified/vendored files, assets, files with more than 1500 changed lines, and anything past `MAX_DIFF_LINES`
+for the whole PR. Skipped files are listed (Phase 4 puts them in the summary), so nothing disappears silently.
+
+**Retries.** 5xx, 429 and rate-limit 403s are retried inside the client with backoff, honouring `Retry-After`. If
+GitHub is still failing, `GitHubRetryable` makes Celery retry the whole task later (30 s, 60 s, … up to 10 min, 5
+times) before the run is marked `failed`. A 404 or 422 isn't retried, because retrying won't fix it.

@@ -4,6 +4,9 @@
 #   stop     stop the containers (data is kept)
 #   status   show containers and health
 #   event    send a signed fake GitHub event:  ./setup.sh event opened|synchronize|merged|draft
+#   tunnel   start a public HTTPS URL for the gateway (cloudflared) and point the GitHub App at it
+#   tunnel-stop
+#   github   check the GitHub App: identity, permissions, installations (and sync repos to the DB)
 #   migrate  apply database migrations
 #   test     run the test suite (needs `start` first)
 #   lint     ruff check + format check
@@ -56,11 +59,51 @@ cmd_start() {
 
 cmd_migrate() { uv run alembic upgrade head; }
 
+env_value() { grep -E "^$1=" .env | head -1 | cut -d= -f2-; }
+
+github_ready() {
+  [[ -n "$(env_value GITHUB_APP_ID)" ]] && [[ -f "$(env_value GITHUB_PRIVATE_KEY_PATH)" ]]
+}
+
+cmd_tunnel_stop() {
+  # only ever stop OUR cloudflared (other projects run their own tunnels)
+  if [[ -f .logs/tunnel.pid ]] && kill -0 "$(cat .logs/tunnel.pid)" 2>/dev/null; then
+    kill "$(cat .logs/tunnel.pid)" && echo "Tunnel stopped"
+  fi
+  rm -f .logs/tunnel.pid
+}
+
+cmd_tunnel() {
+  need cloudflared "brew install cloudflared"
+  mkdir -p .logs
+  cmd_tunnel_stop
+  nohup cloudflared tunnel --no-autoupdate --url http://localhost:8000 >.logs/tunnel.log 2>&1 &
+  echo $! >.logs/tunnel.pid
+  local url=""
+  for _ in $(seq 1 45); do
+    url=$(grep -oE 'https://[a-z0-9-]+\.trycloudflare\.com' .logs/tunnel.log | head -1 || true)
+    [[ -n "$url" ]] && break
+    sleep 1
+  done
+  [[ -z "$url" ]] && { echo "Tunnel did not start — see .logs/tunnel.log" >&2; exit 1; }
+  echo "$url" >.logs/tunnel.url
+  echo "Public URL:   $url"
+  echo "Webhook URL:  $url/webhook/github"
+  if github_ready; then
+    uv run python scripts/github_app.py set-webhook "$url/webhook/github"
+  else
+    echo "(GitHub App not configured yet — paste the Webhook URL into the App form; see docs/SETUP-GITHUB-APP.md)"
+  fi
+}
+
 case "${1:-}" in
   start)   cmd_start ;;
-  stop)    docker compose stop ;;
+  stop)    cmd_tunnel_stop; docker compose stop ;;
   migrate) cmd_migrate ;;
-  status)  docker compose ps ;;
+  status)  docker compose ps; [[ -f .logs/tunnel.url ]] && echo "Tunnel: $(cat .logs/tunnel.url)" ;;
+  tunnel)  cmd_tunnel ;;
+  tunnel-stop) cmd_tunnel_stop ;;
+  github)  uv run python scripts/github_app.py check ;;
   event)   uv run python scripts/send_event.py "${@:2}" ;;
   test)    uv run pytest "${@:2}" ;;
   lint)    uv run ruff check . && uv run ruff format --check . ;;
@@ -69,5 +112,5 @@ case "${1:-}" in
   reset)
     read -r -p "Delete ALL pr-reviewer containers and data? [y/N] " ok
     [[ "$ok" == "y" ]] && docker compose down -v ;;
-  *) sed -n '2,13p' "$0"; exit 1 ;;
+  *) sed -n '2,16p' "$0"; exit 1 ;;
 esac
