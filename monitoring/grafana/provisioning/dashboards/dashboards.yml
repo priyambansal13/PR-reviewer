@@ -1,0 +1,7 @@
+apiVersion: 1
+providers:
+  - name: pr-reviewer
+    folder: PR Reviewer
+    type: file
+    options:
+      path: /var/lib/grafana/dashboards

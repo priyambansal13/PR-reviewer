@@ -10,6 +10,7 @@ from collections.abc import AsyncIterator
 from typing import Annotated, Any, Protocol
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Request
+from prometheus_fastapi_instrumentator import Instrumentator
 from sqlalchemy import delete
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
@@ -18,11 +19,13 @@ from common.config import get_settings
 from common.db.models import ReviewRun, WebhookDelivery
 from common.db.session import get_engine
 from common.logging import setup_logging
+from common.metrics import EVENTS
 from services.webhook.handlers import InvalidPayload, process_event
 
 log = setup_logging("webhook")
 
 app = FastAPI(title="PR Reviewer · Webhook")
+Instrumentator(excluded_handlers=["/metrics", "/healthz"]).instrument(app).expose(app, include_in_schema=False)
 
 
 class Enqueuer(Protocol):
@@ -85,6 +88,7 @@ async def events(
             await _forget(session, x_github_delivery, outcome.run_id)
             raise HTTPException(503, "queue unavailable, redeliver later") from exc
 
+    EVENTS.labels(x_github_event, payload.get("action") or "-", outcome.result).inc()
     return outcome.as_json()
 
 

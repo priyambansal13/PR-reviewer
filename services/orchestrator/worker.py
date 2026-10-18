@@ -4,6 +4,7 @@ Run: uv run celery -A services.orchestrator.worker worker -Q review -n orchestra
 """
 
 import logging
+import time
 import uuid
 from datetime import UTC, datetime
 from typing import Any
@@ -13,7 +14,7 @@ from redis.asyncio import Redis
 from sqlalchemy import delete, func, select, update
 from sqlalchemy.orm import selectinload
 
-from common import aio
+from common import aio, tracing, worker_metrics  # noqa: F401  (worker_metrics: registers the metrics server)
 from common.celery_app import TASK_POST_REVIEW, TASK_REVIEW_PR, celery_app
 from common.config import get_settings
 from common.db.models import Finding as FindingRow
@@ -22,6 +23,17 @@ from common.db.session import session_scope
 from common.github import GitHubAppAuth, GitHubClient, GitHubError, GitHubRetryable
 from common.llm import make_llm
 from common.logging import setup_logging
+from common.metrics import (
+    AGENT_FAILURES,
+    AGENT_FINDINGS,
+    AGENT_SECONDS,
+    COST,
+    DIFF_LINES,
+    FINDINGS,
+    REVIEW_SECONDS,
+    REVIEWS,
+    TOKENS,
+)
 from common.patterns import load_knowledge
 from services.orchestrator import report
 from services.orchestrator.fetch import Superseded, fetch_diff
@@ -173,8 +185,24 @@ async def review(run_id: str) -> str:
                     len(knowledge.frequent_issues),
                     len(knowledge.suppressed_categories),
                 )
-                graph = build_review_graph(make_llm(settings))
-                state = await graph.ainvoke({"ctx": ctx}, config={"run_name": f"review {label}"})
+                DIFF_LINES.observe(sel.changed_lines)
+                with tracing.trace(
+                    f"review {repo.full_name}#{pr.number}",
+                    seed=f"{run_id}:{time.time()}",
+                    session_id=f"{repo.full_name}#{pr.number}",  # all reviews of one PR group together
+                    tags=["review", repo.full_name],
+                    metadata={"run_id": run_id, "head_sha": head_sha, "files": str(len(sel.files))},
+                ) as tr:
+                    if tr.trace_id:
+                        await _set(rid, langfuse_trace_id=tr.trace_id)
+                    graph = build_review_graph(make_llm(settings))
+                    state = await graph.ainvoke(
+                        {"ctx": ctx}, config={"run_name": f"review {label}", "callbacks": tr.callbacks}
+                    )
+                    tr.output(
+                        {"verdict": state["verdict"], "findings": len(state["findings"]), "summary": state["summary"]}
+                    )
+                _record_metrics(state, settings.openai_model)
 
                 findings, runs = state["findings"], state["agent_runs"]
                 tin, tout = sum(r.tokens_in for r in runs), sum(r.tokens_out for r in runs)
@@ -197,7 +225,8 @@ async def review(run_id: str) -> str:
                     report.headline(findings),
                     f"**{report.VERDICT[state['verdict']]}**\n\n{state['summary']}\n\n"
                     f"{report.findings_table(findings)}\n\n"
-                    + report.run_footer(runs, settings.openai_model, sel.skipped),
+                    + report.run_footer(runs, settings.openai_model, sel.skipped)
+                    + (f"\n\n[LLM trace in Langfuse]({tr.url})" if tr.url else ""),
                     report.details(findings),
                 )
                 celery_app.send_task(TASK_POST_REVIEW, kwargs={"run_id": run_id})  # reviewer posts it to the PR
@@ -209,6 +238,20 @@ async def review(run_id: str) -> str:
                 raise
     finally:
         await redis.aclose()
+
+
+def _record_metrics(state: dict, model: str) -> None:
+    for r in state["agent_runs"]:
+        if r.agent != "summary":
+            AGENT_SECONDS.labels(r.agent).observe(r.seconds)
+            AGENT_FINDINGS.labels(r.agent).inc(r.findings)
+            if r.error:
+                AGENT_FAILURES.labels(r.agent).inc()
+        TOKENS.labels(r.agent, "input").inc(r.tokens_in)
+        TOKENS.labels(r.agent, "output").inc(r.tokens_out)
+        COST.labels("review").inc(cost_usd(model, r.tokens_in, r.tokens_out))
+    for f in state["findings"]:
+        FINDINGS.labels(f.severity).inc()
 
 
 async def _save(rid: uuid.UUID, findings: list, state: dict, tin: int, tout: int, model: str) -> None:
@@ -256,13 +299,20 @@ async def _save(rid: uuid.UUID, findings: list, state: dict, tin: int, tout: int
     max_retries=5,
 )
 def review_pr(self, run_id: str) -> str:
+    started = time.monotonic()
     try:
-        return aio.run(review(run_id))
+        result = aio.run(review(run_id))
+        REVIEWS.labels(result).inc()
+        if result == "saved":
+            REVIEW_SECONDS.observe(time.monotonic() - started)
+        return result
     except GitHubRetryable:
         if self.request.retries >= self.max_retries:
+            REVIEWS.labels("failed").inc()
             aio.run(_fail(run_id, "GitHub kept failing (rate limit / outage)"))
         raise
     except Exception as exc:
+        REVIEWS.labels("failed").inc()
         aio.run(_fail(run_id, f"{type(exc).__name__}: {exc}"))
         raise
 

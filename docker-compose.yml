@@ -16,6 +16,13 @@ x-app: &app
     redis: { condition: service_healthy }
   restart: unless-stopped
 
+# Celery workers fork several processes, so Prometheus runs in multiprocess mode: the directory is emptied at start,
+# each child writes its own mmap files, and the parent serves the sum on :9100 (common/worker_metrics.py).
+x-worker-env: &worker-env
+  <<: *app-env
+  PROMETHEUS_MULTIPROC_DIR: /tmp/prom
+  METRICS_PORT: "9100"
+
 x-http-health: &http-health
   interval: 10s
   timeout: 3s
@@ -79,21 +86,66 @@ services:
   orchestrator-worker:
     <<: *app
     container_name: prr-orchestrator
-    command: ["celery", "-A", "services.orchestrator.worker", "worker", "-Q", "review", "-n", "orchestrator@%h",
-              "--loglevel=INFO", "--concurrency=4"]
+    environment: *worker-env
+    command: ["sh", "-c", "rm -rf $$PROMETHEUS_MULTIPROC_DIR && mkdir -p $$PROMETHEUS_MULTIPROC_DIR &&
+              exec celery -A services.orchestrator.worker worker -Q review -n orchestrator@%h --loglevel=INFO --concurrency=4"]
 
   reviewer-worker:
     <<: *app
     container_name: prr-reviewer
-    command: ["celery", "-A", "services.reviewer.worker", "worker", "-Q", "post", "-n", "reviewer@%h",
-              "--loglevel=INFO", "--concurrency=2"]
+    environment: *worker-env
+    command: ["sh", "-c", "rm -rf $$PROMETHEUS_MULTIPROC_DIR && mkdir -p $$PROMETHEUS_MULTIPROC_DIR &&
+              exec celery -A services.reviewer.worker worker -Q post -n reviewer@%h --loglevel=INFO --concurrency=2"]
 
   learner-worker:
     <<: *app
     container_name: prr-learner
-    command: ["celery", "-A", "services.learner.worker", "worker", "-Q", "learn", "-n", "learner@%h",
-              "--loglevel=INFO", "--concurrency=1"]
+    environment: *worker-env
+    command: ["sh", "-c", "rm -rf $$PROMETHEUS_MULTIPROC_DIR && mkdir -p $$PROMETHEUS_MULTIPROC_DIR &&
+              exec celery -A services.learner.worker worker -Q learn -n learner@%h --loglevel=INFO --concurrency=1"]
+
+  # --- monitoring -------------------------------------------------------------------------------------------------
+  redis-exporter:  # Celery queue depth: Redis list lengths of the review/post/learn queues
+    image: oliver006/redis_exporter:v1.67.0
+    container_name: prr-redis-exporter
+    environment:
+      REDIS_ADDR: redis://redis:6379
+      REDIS_EXPORTER_CHECK_SINGLE_KEYS: db0=review,db0=post,db0=learn
+    depends_on:
+      redis: { condition: service_healthy }
+    restart: unless-stopped
+
+  prometheus:
+    image: prom/prometheus:v3.1.0
+    container_name: prr-prometheus
+    command: ["--config.file=/etc/prometheus/prometheus.yml", "--storage.tsdb.retention.time=15d"]
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - promdata:/prometheus
+    ports:
+      - "9090:9090"
+    restart: unless-stopped
+
+  grafana:
+    image: grafana/grafana:11.4.0
+    container_name: prr-grafana
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: admin   # local only
+      GF_AUTH_ANONYMOUS_ENABLED: "true"   # view dashboards without logging in
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Viewer
+      GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH: /var/lib/grafana/dashboards/pr-reviewer.json
+    volumes:
+      - ./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./monitoring/grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafanadata:/var/lib/grafana
+    ports:
+      - "3030:3000"   # 3000 is taken on this machine
+    depends_on: [prometheus]
+    restart: unless-stopped
 
 volumes:
   pgdata:
   redisdata:
+  promdata:
+  grafanadata:

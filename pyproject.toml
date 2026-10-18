@@ -19,6 +19,8 @@ dependencies = [
     "langgraph>=0.6",
     "langchain-openai>=0.3",
     "langchain-core>=0.3",
+    "prometheus-fastapi-instrumentator>=7",
+    "langfuse>=3",
 ]
 
 [dependency-groups]

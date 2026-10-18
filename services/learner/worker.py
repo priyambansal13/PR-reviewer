@@ -4,6 +4,7 @@ Run: uv run celery -A services.learner.worker worker -Q learn -n learner@%h --lo
 """
 
 import logging
+import time
 import uuid
 
 import httpx
@@ -11,7 +12,7 @@ from redis.asyncio import Redis
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 
-from common import aio
+from common import aio, tracing, worker_metrics  # noqa: F401  (registers the metrics server)
 from common.celery_app import TASK_LEARN_FROM_PR, celery_app
 from common.config import get_settings
 from common.db.models import PullRequest
@@ -19,6 +20,7 @@ from common.db.session import session_scope
 from common.github import GitHubAppAuth, GitHubClient, GitHubRetryable
 from common.llm import make_llm
 from common.logging import setup_logging
+from common.metrics import LEARNER_RUNS
 from services.learner.learn import learn_from_pr as learn
 
 log = setup_logging("learner")
@@ -40,11 +42,22 @@ async def run_learner(pr_id: str, force: bool = False) -> dict:
     try:
         async with httpx.AsyncClient(base_url=settings.github_api_url, timeout=30) as http:
             gh = GitHubClient(http, GitHubAppAuth.from_settings(http, redis), installation_id)
-            async with session_scope() as session:
-                result = await learn(session, pid, gh, make_llm(settings, temperature=0), force=force)
+            with tracing.trace(
+                f"learn {label}",
+                seed=f"learn:{pr_id}:{time.time()}",
+                session_id=label,
+                tags=["learner", label.split("#")[0]],
+                metadata={"pr_id": pr_id},
+            ) as tr:
+                async with session_scope() as session:
+                    result = await learn(
+                        session, pid, gh, make_llm(settings, temperature=0), force=force, callbacks=tr.callbacks
+                    )
+                tr.output(result.__dict__)
     finally:
         await redis.aclose()
     log.info("%s: %s", label, result)
+    LEARNER_RUNS.labels("skipped" if result.skipped else "learned").inc()
     return result.__dict__
 
 
@@ -55,4 +68,8 @@ async def run_learner(pr_id: str, force: bool = False) -> dict:
     max_retries=5,
 )
 def learn_from_pr(pr_id: str, force: bool = False) -> dict:
-    return aio.run(run_learner(pr_id, force))
+    try:
+        return aio.run(run_learner(pr_id, force))
+    except Exception:
+        LEARNER_RUNS.labels("failed").inc()
+        raise

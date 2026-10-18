@@ -12,7 +12,7 @@ from redis.asyncio import Redis
 from sqlalchemy import select, update
 from sqlalchemy.orm import selectinload
 
-from common import aio
+from common import aio, worker_metrics  # noqa: F401  (registers the metrics server)
 from common.celery_app import TASK_POST_REVIEW, celery_app
 from common.config import get_settings
 from common.db.models import Finding, PullRequest, ReviewRun, RunStatus
@@ -20,6 +20,7 @@ from common.db.session import session_scope
 from common.diff import FileDiff, parse_diff, parse_patch
 from common.github import DiffUnavailable, GitHubAppAuth, GitHubClient, GitHubError, GitHubRetryable
 from common.logging import setup_logging
+from common.metrics import INLINE_COMMENTS, POSTED
 from services.reviewer.compose import MARKER, build_review
 
 log = setup_logging("reviewer")
@@ -71,6 +72,7 @@ async def post(run_id: str) -> str:
                 why = "PR closed" if pull["state"] != "open" else f"PR head moved to {pull['head']['sha'][:7]}"
                 log.info("%s: not posting, %s", label, why)
                 await _set(rid, status=RunStatus.skipped, error=f"not posted: {why}")
+                POSTED.labels("-", "skipped").inc()
                 return "skipped"
 
             files = await _files(gh, repo.full_name, pr.number, base_sha, head_sha)
@@ -84,6 +86,7 @@ async def post(run_id: str) -> str:
             if existing := next((r for r in reviews if marker in (r.get("body") or "")), None):
                 log.info("%s: review %s already on GitHub — recording it", label, existing["id"])
                 await _record(rid, gh, repo.full_name, pr.number, existing["id"], _inline(payload))
+                POSTED.labels("-", "already_posted").inc()
                 return "already posted"
 
             review, payload = await _create_with_fallbacks(
@@ -98,6 +101,8 @@ async def post(run_id: str) -> str:
 
             await _dismiss_stale(gh, repo.full_name, pr.number, reviews, review, head_sha)
             await _record(rid, gh, repo.full_name, pr.number, review["id"], _inline(payload))
+            POSTED.labels(payload.event, "posted").inc()
+            INLINE_COMMENTS.inc(len(payload.comments))
             log.info(
                 "%s: posted review %s (%s, %d inline comments)",
                 label,
@@ -204,5 +209,6 @@ def post_review(self, run_id: str) -> str:
             aio.run(_set(uuid.UUID(run_id), status=RunStatus.failed, error="posting: GitHub kept failing"))
         raise
     except Exception as exc:
+        POSTED.labels("-", "failed").inc()
         aio.run(_set(uuid.UUID(run_id), status=RunStatus.failed, error=f"posting: {type(exc).__name__}: {exc}"[:2000]))
         raise

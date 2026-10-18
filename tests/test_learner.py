@@ -6,6 +6,7 @@ from types import SimpleNamespace
 import httpx
 import pytest
 import respx
+from langchain_core.messages import AIMessage
 from sqlalchemy import delete, select
 
 from common.db.models import (
@@ -107,9 +108,10 @@ class FakeLLM:
         class Bound:
             async def ainvoke(self, messages, config=None):
                 llm.prompts.append(messages[1].content)
+                raw = AIMessage(content="", usage_metadata={"input_tokens": 10, "output_tokens": 2, "total_tokens": 12})
                 if schema is VerificationReport:
                     lines = [ln for ln in messages[1].content.splitlines() if ln[:1].isdigit() and ". " in ln]
-                    return VerificationReport(
+                    parsed = VerificationReport(
                         checks=[
                             ClaimCheck(
                                 index=int(ln.split(".")[0]),
@@ -119,7 +121,9 @@ class FakeLLM:
                             for ln in lines
                         ]
                     )
-                return ConventionsReport(conventions=llm.conventions)
+                else:
+                    parsed = ConventionsReport(conventions=llm.conventions)
+                return {"raw": raw, "parsed": parsed, "parsing_error": None}
 
         return Bound()
 

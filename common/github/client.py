@@ -8,6 +8,7 @@ from typing import Any
 import httpx
 
 from common.github.auth import API_VERSION, GitHubAppAuth
+from common.metrics import GITHUB_REQUESTS
 
 log = logging.getLogger("github")
 
@@ -143,11 +144,13 @@ class GitHubClient:
             try:
                 resp = await self._http.request(method, path, headers=headers, **kwargs)
             except httpx.TransportError as exc:
+                GITHUB_REQUESTS.labels("error").inc()
                 if attempt == MAX_ATTEMPTS:
                     raise GitHubRetryable(f"{method} {path}: {exc}") from exc
                 await asyncio.sleep(_backoff(attempt))
                 continue
 
+            GITHUB_REQUESTS.labels(f"{resp.status_code // 100}xx").inc()
             if resp.status_code in ok_statuses:
                 return resp
             if resp.status_code == 401 and not refreshed_token:

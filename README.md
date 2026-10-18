@@ -10,8 +10,8 @@ Prometheus + Grafana · Langfuse.
 - **Plan & architecture:** [docs/PLAN.md](docs/PLAN.md)
 - **How each phase works:** [docs/LEARNING-NOTES.md](docs/LEARNING-NOTES.md)
 - **GitHub App setup:** [docs/SETUP-GITHUB-APP.md](docs/SETUP-GITHUB-APP.md)
-- **Status:** Phase 5 done: reviews now use what the Learner knows about each repo (recurring issues, verified
-  conventions, 👍/👎 feedback). Next: Phase 6 (Prometheus, Grafana, Langfuse).
+- **Status:** Phase 6: Prometheus and Grafana are live; Langfuse tracing switches on once its keys are in `.env`.
+  Next: Phase 7 (CI/CD and Kubernetes files).
 
 ## Quick start
 
@@ -40,6 +40,9 @@ Needs Docker Desktop and [uv](https://docs.astral.sh/uv/).
 | Gateway (public entry) | `http://localhost:8000` — `POST /webhook/github` |
 | Webhook service | internal only (`webhook:8001` on the compose network) |
 | Workers | `orchestrator-worker` (queue `review`), `reviewer-worker` (queue `post`), `learner-worker` (queue `learn`) |
+| Grafana | `http://localhost:3030` — dashboard **PR Reviewer** (anonymous view; admin/admin to edit) |
+| Prometheus | `http://localhost:9090` |
+| Langfuse | your Langfuse Cloud project (set `LANGFUSE_PUBLIC_KEY` / `LANGFUSE_SECRET_KEY`) |
 | Postgres | `localhost:5435` (user/pass/db `reviewer`) |
 | Redis | `localhost:6380` |
 
@@ -50,6 +53,7 @@ common/          shared: config, models + async session, Celery app, GitHub App 
 services/        gateway, webhook, orchestrator (worker), reviewer (worker), learner (worker)
 scripts/         send_event.py (pretend to be GitHub), github_app.py (check App, set webhook URL)
 migrations/      Alembic (async)
+monitoring/      prometheus.yml, Grafana provisioning, dashboard generator (build_dashboard.py)
 tests/           pytest — DB tests run in a rolled-back transaction
 docs/            plan and setup guides
 ```

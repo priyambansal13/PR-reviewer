@@ -14,10 +14,13 @@ from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from common.config import get_settings
 from common.db.models import Finding, PatternKind, PullRequest, RepoPattern, ReviewRun
 from common.diff import parse_diff, select_reviewable
 from common.github import DiffUnavailable, GitHubClient, GitHubError
+from common.metrics import CONVENTIONS, COST, REACTIONS, TOKENS
 from common.patterns import feedback_weight
+from services.orchestrator.graph.cost import cost_usd
 
 log = logging.getLogger("learner")
 
@@ -88,7 +91,12 @@ class LearnResult:
 
 
 async def learn_from_pr(
-    session: AsyncSession, pr_id: uuid.UUID, gh: GitHubClient, llm: Any, force: bool = False
+    session: AsyncSession,
+    pr_id: uuid.UUID,
+    gh: GitHubClient,
+    llm: Any,
+    force: bool = False,
+    callbacks: list | None = None,
 ) -> LearnResult:
     pr = await session.scalar(
         select(PullRequest)
@@ -119,11 +127,13 @@ async def learn_from_pr(
         result.feedback_comments += 1
         result.thumbs_up += f.thumbs_up
         result.thumbs_down += f.thumbs_down
+        REACTIONS.labels("thumbs_up").inc(f.thumbs_up)
+        REACTIONS.labels("thumbs_down").inc(f.thumbs_down)
     await session.flush()
 
     # 2. Conventions, only from merged code
     if pr.merged:
-        result.conventions = await _learn_conventions(session, pr, gh, llm, findings)
+        result.conventions = await _learn_conventions(session, pr, gh, llm, findings, callbacks or [])
     else:
         log.info("%s#%d is not merged — learning feedback only", repo.full_name, pr.number)
 
@@ -134,7 +144,7 @@ async def learn_from_pr(
     return result
 
 
-async def _learn_conventions(session, pr: PullRequest, gh: GitHubClient, llm, findings) -> int:
+async def _learn_conventions(session, pr: PullRequest, gh: GitHubClient, llm, findings, callbacks: list) -> int:
     repo = pr.repository
     pull = await gh.get_pull(repo.full_name, pr.number)
     base, head = pull["base"]["sha"], pull["head"]["sha"]
@@ -164,13 +174,19 @@ async def _learn_conventions(session, pr: PullRequest, gh: GitHubClient, llm, fi
         f"Code the review flagged as problems (do not learn from it):\n{flagged or '(none)'}\n\n"
         f"<diff>\n{diff}\n</diff>"
     )
-    report: ConventionsReport = await llm.with_structured_output(ConventionsReport).ainvoke(
-        [SystemMessage(CONVENTIONS_SYSTEM), HumanMessage(prompt)], config={"run_name": "learn-conventions"}
+    report: ConventionsReport = await _ask(
+        llm,
+        ConventionsReport,
+        [SystemMessage(CONVENTIONS_SYSTEM), HumanMessage(prompt)],
+        "learn-conventions",
+        callbacks,
     )
     now = datetime.now(UTC)
     added = {f.path: f.added_lines() for f in selected}
     candidates = [c for c in report.conventions[:MAX_NEW_CONVENTIONS] if _has_evidence(c, added)]
-    accepted = await _verify(llm, candidates, diff) if candidates else []
+    accepted = await _verify(llm, candidates, diff, callbacks) if candidates else []
+    CONVENTIONS.labels("accepted").inc(len(accepted))
+    CONVENTIONS.labels("rejected").inc(len(report.conventions) - len(accepted))
     if dropped := len(report.conventions) - len(accepted):
         log.info(
             "%s#%d: dropped %d of %d proposed convention(s) (no evidence or failed fact-check)",
@@ -198,12 +214,30 @@ async def _learn_conventions(session, pr: PullRequest, gh: GitHubClient, llm, fi
     return len(accepted)
 
 
-async def _verify(llm, candidates: list[Convention], diff: str) -> list[Convention]:
+async def _ask(llm, schema, messages, run_name: str, callbacks: list):
+    """A structured LLM call that also records tokens and cost for the dashboard."""
+    result = await llm.with_structured_output(schema, include_raw=True).ainvoke(
+        messages, config={"run_name": run_name, "callbacks": callbacks}
+    )
+    usage = getattr(result["raw"], "usage_metadata", None) or {}
+    tin, tout = usage.get("input_tokens", 0), usage.get("output_tokens", 0)
+    TOKENS.labels("learner", "input").inc(tin)
+    TOKENS.labels("learner", "output").inc(tout)
+    COST.labels("learner").inc(cost_usd(get_settings().openai_model, tin, tout))
+    if result.get("parsed") is None:
+        raise ValueError(f"unparseable model output: {result.get('parsing_error')}")
+    return result["parsed"]
+
+
+async def _verify(llm, candidates: list[Convention], diff: str, callbacks: list) -> list[Convention]:
     """Second opinion: generating claims is easy to get wrong, checking a claim against the code is easier."""
     claims = "\n".join(f"{i}. {c.text}" for i, c in enumerate(candidates, 1))
-    report: VerificationReport = await llm.with_structured_output(VerificationReport).ainvoke(
+    report: VerificationReport = await _ask(
+        llm,
+        VerificationReport,
         [SystemMessage(VERIFY_SYSTEM), HumanMessage(f"Claims:\n{claims}\n\n<diff>\n{diff}\n</diff>")],
-        config={"run_name": "verify-conventions"},
+        "verify-conventions",
+        callbacks,
     )
     for chk in report.checks:
         if not chk.holds:

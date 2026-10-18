@@ -327,3 +327,64 @@ never double-posts); `rereview` saves new findings with a new `finished_at` (new
 ./setup.sh knowledge priyambansal13/PR-reviewer     # what it knows, with scores
 ./setup.sh learn priyambansal13/PR-reviewer#3       # run the Learner now (unmerged PR: feedback only)
 ```
+
+## Phase 6 — Observability: Prometheus, Grafana, Langfuse
+
+```mermaid
+flowchart LR
+    subgraph app[App containers]
+        GW[gateway /metrics] & WH[webhook /metrics]
+        OW[orchestrator :9100] & RW[reviewer :9100] & LW[learner :9100]
+    end
+    RX[redis-exporter<br/>queue depth] --> P
+    GW & WH & OW & RW & LW -->|scrape every 10s| P[(Prometheus :9090)]
+    P --> G[Grafana :3030<br/>"PR Reviewer" dashboard]
+    OW & LW -->|LLM spans via LangChain callback| LF[Langfuse Cloud<br/>one trace per review]
+```
+
+**Two kinds of observability, for two questions:**
+- **Prometheus/Grafana: "is the system healthy?"** Counts and latencies over time: reviews per hour, p95 agent
+  latency, queue depth, GitHub error rate, cost per day. Cheap, aggregated, good for alerts.
+- **Langfuse: "what did the model actually do on *this* review?"** The full prompt, output, tokens and latency of
+  every LLM call, grouped per review. Good for debugging a bad comment or tuning a prompt.
+
+**Metrics in a pre-forked worker** (`common/metrics.py`, `common/worker_metrics.py`). A Celery worker is one parent
+plus N forked children. A normal Prometheus client keeps counters in memory, so each child would have its own
+counters and a scrape would see only one process. In **multiprocess mode** (`PROMETHEUS_MULTIPROC_DIR`) every process
+writes its values to memory-mapped files in a shared directory, and one HTTP server in the parent adds them up on
+each scrape. The directory must be emptied at container start (the compose command does `rm -rf`), or counters from
+dead processes would be counted again.
+
+**What's measured:**
+
+| Metric | Labels | Answers |
+|---|---|---|
+| `prr_webhooks_total` | event, result | How many deliveries, how many forged (`bad_signature`)? |
+| `prr_reviews_total` / `prr_review_duration_seconds` | status | Throughput, failures, end-to-end latency |
+| `prr_agent_duration_seconds` / `prr_agent_failures_total` | agent | Which agent is slow or flaky? |
+| `prr_agent_findings_total` vs `prr_findings_total` | agent / severity | How much does merging de-duplicate? What severities? |
+| `prr_llm_tokens_total` / `prr_llm_cost_usd_total` | component | Where does the money go? |
+| `prr_reviews_posted_total`, `prr_inline_comments_total` | event, result | Posting outcomes |
+| `prr_github_requests_total` | status_class | GitHub errors and rate limiting |
+| `prr_conventions_total`, `prr_feedback_reactions_total` | result / kind | Is the Learner accepting junk? Do people react? |
+| `redis_key_size{key=review/post/learn}` | — | Celery backlog per queue |
+| `http_request_duration_seconds` | handler | Gateway/webhook latency (from the FastAPI instrumentator) |
+
+**Labels must stay small.** Labels are severity, agent and status, never PR number or repo name: every distinct label
+value creates a new time series, and per-PR labels would grow without limit (the "cardinality explosion"). Per-PR
+detail belongs in Langfuse and Postgres.
+
+**The gateway's `/metrics` is internal.** The gateway is the public service, and metrics reveal internals. Prometheus
+reaches it directly on the compose network. Anything arriving through the tunnel carries `cf-connecting-ip` (or
+`x-forwarded-for` behind a load balancer) and gets a 404. Verified: `https://…trycloudflare.com/metrics` → 404.
+
+**The dashboard is code** (`monitoring/build_dashboard.py` → `grafana/dashboards/pr-reviewer.json`), provisioned
+with its Prometheus datasource at startup. Rebuilding the stack gives the same dashboard, and changes show up in git
+diffs.
+
+**Langfuse tracing** (`common/tracing.py`). The Langfuse v5 SDK is built on OpenTelemetry. A review opens a root span
+whose trace id is derived from the run (`create_trace_id(seed=…)`), so the id is known up front and saved on
+`review_runs.langfuse_trace_id`. `propagate_attributes(session_id="owner/repo#N")` groups all reviews of one PR into a
+Langfuse *session*. A LangChain `CallbackHandler` in the graph's config records every LLM call, including the four
+parallel agents, as children of that span. Without keys, `trace()` is a no-op, so tracing can never break a
+review.
